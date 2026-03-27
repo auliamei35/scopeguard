@@ -9,9 +9,15 @@
     "lint": "eslint"
   },
   "dependencies": {
+    "@ai-sdk/anthropic": "^3.0.64",
+    "@auth0/ai": "^6.0.0",
+    "@auth0/nextjs-auth0": "^4.16.0",
+    "ai": "^6.0.140",
+    "jose": "^6.2.2",
     "next": "16.2.1",
     "react": "19.2.4",
-    "react-dom": "19.2.4"
+    "react-dom": "19.2.4",
+    "zod": "^4.3.6"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
