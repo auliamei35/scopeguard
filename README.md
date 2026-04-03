@@ -28,26 +28,26 @@ ScopeGuard solves this with a **three-layer authorization gateway** that ensures
 
 ## Architecture: Four-Layer Defense
 
-\```
+```
 Every tool call passes through four mandatory layers:
 
 ┌─────────────────────────────────────────────────────────────┐
 │                   SCOPEGUARD GATEWAY                        │
 │                                                             │
-│  Layer 1 ── Agent Identity (Auth0 M2M)                      │
+│  Layer 1 ── Agent Identity (Auth0 M2M)                     │
 │  "Who is this agent? Is it registered?"                     │
 │             ↓ if valid                                      │
-│  Layer 2 ── Hard Constraints Engine (non-LLM, pure code)    │
+│  Layer 2 ── Hard Constraints Engine (non-LLM, pure code)   │
 │  "Is this action within absolute limits?"                   │
 │  • Amount ceiling  • Domain whitelist                       │
 │  • Velocity cap    • Scope ceiling                          │
 │  • Data classification (HR)                                 │
 │  • Country block / SAR threshold (AML)                      │
 │             ↓ if passes                                     │
-│  Layer 3 ── LLM Intent Analyzer (Gemini 2.5 Flash)          │
+│  Layer 3 ── LLM Intent Analyzer (Gemini 2.5 Flash)         │
 │  "What is the MINIMAL scope needed for this action?"        │
 │             ↓                                               │
-│  CIBA Step-Up ── Human Approval (if high-stakes)            │
+│  CIBA Step-Up ── Human Approval (if high-stakes)           │
 │  "Does the user explicitly approve this?"                   │
 │             ↓                                               │
 │  Token Vault ── Scoped Token Exchange                       │
@@ -62,7 +62,7 @@ Every tool call passes through four mandatory layers:
 │  • Anomalous response volume                                │
 │  ↓ clean → return  │  violation → redact  │  critical → quarantine
 └─────────────────────────────────────────────────────────────┘
-\```
+```
 
 ### Why Layer 2 Must Run Before Layer 3
 
