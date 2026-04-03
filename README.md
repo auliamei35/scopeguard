@@ -31,37 +31,37 @@ ScopeGuard solves this with a **three-layer authorization gateway** that ensures
 \```
 Every tool call passes through four mandatory layers:
 
-┌───────────────────────────────────────────────────────────────────┐
-│                   SCOPEGUARD GATEWAY                              │
-│                                                                   │
-│  Layer 1 ── Agent Identity (Auth0 M2M)                            │
-│  "Who is this agent? Is it registered?"                           │
-│             ↓ if valid                                            │
-│  Layer 2 ── Hard Constraints Engine (non-LLM, pure code)          │
-│  "Is this action within absolute limits?"                         │
-│  • Amount ceiling  • Domain whitelist                             │
-│  • Velocity cap    • Scope ceiling                                │
-│  • Data classification (HR)                                       │
-│  • Country block / SAR threshold (AML)                            │
-│             ↓ if passes                                           │
-│  Layer 3 ── LLM Intent Analyzer (Gemini 2.5 Flash)                │
-│  "What is the MINIMAL scope needed for this action?"              │
-│             ↓                                                     │
-│  CIBA Step-Up ── Human Approval (if high-stakes)                  │
-│  "Does the user explicitly approve this?"                         │
-│             ↓                                                     │
-│  Token Vault ── Scoped Token Exchange                             │
-│  Short-lived token, 300 second expiry                             │
-│             ↓                                                     │
-│  Layer 4 ── Post-Execution Verification                           │
-│  "Is the result safe to return to the agent?"                     │
-│  • Sensitive field leak scan                                      │
-│  • PII detection & redaction                                      │
-│  • Amount drift detection                                         │
-│  • Scope overshoot check                                          │
-│  • Anomalous response volume                                      │
-│  ↓ clean → return  │  violation → redact  │  critical → quarantine│
-└───────────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────┐
+│                   SCOPEGUARD GATEWAY                        │
+│                                                             │
+│  Layer 1 ── Agent Identity (Auth0 M2M)                      │
+│  "Who is this agent? Is it registered?"                     │
+│             ↓ if valid                                      │
+│  Layer 2 ── Hard Constraints Engine (non-LLM, pure code)    │
+│  "Is this action within absolute limits?"                   │
+│  • Amount ceiling  • Domain whitelist                       │
+│  • Velocity cap    • Scope ceiling                          │
+│  • Data classification (HR)                                 │
+│  • Country block / SAR threshold (AML)                      │
+│             ↓ if passes                                     │
+│  Layer 3 ── LLM Intent Analyzer (Gemini 2.5 Flash)          │
+│  "What is the MINIMAL scope needed for this action?"        │
+│             ↓                                               │
+│  CIBA Step-Up ── Human Approval (if high-stakes)            │
+│  "Does the user explicitly approve this?"                   │
+│             ↓                                               │
+│  Token Vault ── Scoped Token Exchange                       │
+│  Short-lived token, 300 second expiry                       │
+│             ↓                                               │
+│  Layer 4 ── Post-Execution Verification                     │
+│  "Is the result safe to return to the agent?"               │
+│  • Sensitive field leak scan                                │
+│  • PII detection & redaction                                │
+│  • Amount drift detection                                   │
+│  • Scope overshoot check                                    │
+│  • Anomalous response volume                                │
+│  ↓ clean → return  │  violation → redact  │  critical → quarantine
+└─────────────────────────────────────────────────────────────┘
 \```
 
 ### Why Layer 2 Must Run Before Layer 3
