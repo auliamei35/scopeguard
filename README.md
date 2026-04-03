@@ -26,34 +26,43 @@ ScopeGuard solves this with a **three-layer authorization gateway** that ensures
 
 ---
 
-## Architecture: Three-Layer Defense
+## Architecture: Four-Layer Defense
 
-```
-Every tool call passes through three mandatory layers before execution:
+\```
+Every tool call passes through four mandatory layers:
 
-┌─────────────────────────────────────────────────────────────┐
-│                   SCOPEGUARD GATEWAY                        │
-│                                                             │
-│  Layer 1 ── Agent Identity (Auth0 M2M)                     │
-│  "Who is this agent? Is it registered?"                     │
-│             ↓ if valid                                      │
-│  Layer 2 ── Hard Constraints Engine (non-LLM, pure code)   │
-│  "Is this action within absolute limits?"                   │
-│  • Amount ceiling  • Domain whitelist                       │
-│  • Velocity cap    • Scope ceiling                          │
-│  • Data classification (HR)                                 │
-│  • Country block / SAR threshold (AML)                      │
-│             ↓ if passes                                     │
-│  Layer 3 ── LLM Intent Analyzer (Gemini 2.5 Flash)         │
-│  "What is the MINIMAL scope needed for this action?"        │
-│             ↓                                               │
-│  CIBA Step-Up ── Human Approval (if high-stakes)           │
-│  "Does the user explicitly approve this?"                   │
-│             ↓                                               │
-│  Auth0 Token Vault ── Scoped Token Exchange                 │
-│  Short-lived token issued for this action only              │
-└─────────────────────────────────────────────────────────────┘
-```
+┌───────────────────────────────────────────────────────────────────┐
+│                   SCOPEGUARD GATEWAY                              │
+│                                                                   │
+│  Layer 1 ── Agent Identity (Auth0 M2M)                            │
+│  "Who is this agent? Is it registered?"                           │
+│             ↓ if valid                                            │
+│  Layer 2 ── Hard Constraints Engine (non-LLM, pure code)          │
+│  "Is this action within absolute limits?"                         │
+│  • Amount ceiling  • Domain whitelist                             │
+│  • Velocity cap    • Scope ceiling                                │
+│  • Data classification (HR)                                       │
+│  • Country block / SAR threshold (AML)                            │
+│             ↓ if passes                                           │
+│  Layer 3 ── LLM Intent Analyzer (Gemini 2.5 Flash)                │
+│  "What is the MINIMAL scope needed for this action?"              │
+│             ↓                                                     │
+│  CIBA Step-Up ── Human Approval (if high-stakes)                  │
+│  "Does the user explicitly approve this?"                         │
+│             ↓                                                     │
+│  Token Vault ── Scoped Token Exchange                             │
+│  Short-lived token, 300 second expiry                             │
+│             ↓                                                     │
+│  Layer 4 ── Post-Execution Verification                           │
+│  "Is the result safe to return to the agent?"                     │
+│  • Sensitive field leak scan                                      │
+│  • PII detection & redaction                                      │
+│  • Amount drift detection                                         │
+│  • Scope overshoot check                                          │
+│  • Anomalous response volume                                      │
+│  ↓ clean → return  │  violation → redact  │  critical → quarantine│
+└───────────────────────────────────────────────────────────────────┘
+\```
 
 ### Why Layer 2 Must Run Before Layer 3
 
@@ -117,7 +126,8 @@ scopeguard/
 │   ├── gateway/
 │   │   ├── layer1-identity.ts    # Auth0 JWT verification + agent registry lookup
 │   │   ├── layer2-constraints.ts # Hard constraints engine (LLM-proof)
-│   │   └── layer3-analyzer.ts    # Gemini intent analysis + scope minimization
+│   │   ├── layer3-analyzer.ts    # Gemini intent analysis + scope minimization
+│   │   └── layer4-verify.ts      # Post-Execution Verification Layer
 │   ├── lib/
 │   │   ├── agent-registry.ts     # In-memory agent store with lazy env resolution
 │   │   ├── audit-log.ts          # Structured audit trail with stats
@@ -365,6 +375,30 @@ const myAgent: AgentProfile = {
 3. **Every token is short-lived** — 300 second expiry, scoped to the minimum needed
 4. **Every action is auditable** — agent_id, scopes granted vs used, risk level, decision reason
 5. **High-stakes actions require human approval** — CIBA out-of-band before execution
+
+### Layer 4: Post-Execution Verification
+
+ScopeGuard verifies not just what the agent is *allowed to do* (L1-L3), 
+but also whether the *result of execution* is safe to return.
+
+This addresses the "EchoLeak" class of vulnerabilities identified by 
+OWASP ASI01 — where agents retrieve authorized data but output it to 
+unauthorized recipients or channels.
+
+**Checks performed after every execution:**
+
+| Check | Trigger | Action |
+|-------|---------|--------|
+| Sensitive field leak | Blocked field found in response | Redact field + audit |
+| PII detection | PII pattern in non-PII tool response | Redact + audit |
+| Amount drift | Response amount ≠ requested amount by >5% | Flag + audit |
+| Scope overshoot | Write indicators in read-only response | Flag + audit |
+| Anomalous volume | Response size exceeds tool threshold | Flag + audit |
+
+**Violation severity → action:**
+- `critical` → **Quarantine**: result blocked, agent receives 403
+- `high` → **Redact**: violations removed, sanitized result returned
+- `low/medium` → **Flag**: result returned, violation logged
 
 ### What ScopeGuard Does NOT Do (Current MVP)
 

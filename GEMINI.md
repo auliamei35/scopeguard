@@ -336,6 +336,29 @@ This is what makes consent **meaningful** — the user understands what they are
 
 ---
 
+## Interaction with Layer 4 (Post-Execution Verification)
+
+Gemini's `scopeDecision` output is used by Layer 4 in two ways:
+
+**1. Scope overshoot check:**
+```typescript
+// Layer 4 reads minimalScopes from Gemini's decision
+const hasWriteScope = scopeDecision.minimalScopes.some(s => s.includes(':write'));
+// If no write scope authorized, flags write operation indicators in response
+```
+
+**2. Natural language in quarantine messages:**
+When Layer 4 quarantines a result, the audit log includes Gemini's
+`naturalLanguageExplanation` alongside the violation detail — providing
+full context for security review: what was being attempted, what
+the LLM thought was appropriate, and what went wrong in the output.
+
+**Why Layer 4 is necessary even with Layer 3:**
+Layer 3 determines what scopes are *requested*. Layer 4 verifies what
+data is *actually returned*. Even with correct scope minimization, a
+misconfigured backend could return more data than expected. Layer 4 is
+the output-side safety net that Layer 3 cannot provide.
+
 ## Future Improvements
 
 If extending ScopeGuard beyond the hackathon:

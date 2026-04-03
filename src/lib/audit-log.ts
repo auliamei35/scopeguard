@@ -43,6 +43,9 @@ export function auditLog(params: LogParams): AuditLogEntry {
     STEPUP_TIMEOUT: '🟠',
     TOOL_EXECUTED_SUCCESS: '✅',
     TOOL_EXECUTION_FAILED: '❌',
+    POST_EXEC_CLEAN:'🛡️',
+    POST_EXEC_VIOLATION:'⚠️',
+    POST_EXEC_QUARANTINED:'🔒',
     AGENT_REVOKED: '🚫',
   };
 
@@ -89,6 +92,6 @@ export function getAuditStats() {
     stepUps,
     success,
     blockRate: total > 0 ? Math.round((blocked / total) * 100) : 0,
-    avgScopeReduction: Math.round(avgScopeReduction * 100), // dalam persen
+    avgScopeReduction: Math.round(avgScopeReduction * 100), // in percentage
   };
 }

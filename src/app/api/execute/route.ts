@@ -6,7 +6,9 @@ import { NextRequest, NextResponse } from 'next/server';
 import { validateAgentIdentity } from '@/gateway/layer1-identity';
 import { enforceHardConstraints } from '@/gateway/layer2-constraints';
 import { analyzeScopeNeeded } from '@/gateway/layer3-analyzer';
+import { verifyPostExecution } from '@/gateway/layer4-verify';
 import { requestStepUpApproval } from '@/lib/ciba';
+import { executeToolWithScopedToken } from '@/lib/token-vault';
 import { auditLog } from '@/lib/audit-log';
 import { recordAction } from '@/lib/velocity-tracker';
 import {
@@ -17,7 +19,6 @@ import {
 } from '@/lib/errors';
 import { randomUUID } from 'crypto';
 import type { GatewayRequest, GatewayError, ScopeDecision } from '@/types';
-import { executeToolWithScopedToken } from '@/lib/token-vault';
 
 export async function POST(request: NextRequest) {
   const auditId = randomUUID();
@@ -130,8 +131,9 @@ export async function POST(request: NextRequest) {
   }
 
   // ══════════════════════════════════════════════════════════════
-  // FINAL: Execute via Token Vault
+  // TOKEN VAULT EXECUTION
   // ══════════════════════════════════════════════════════════════
+  const executionStartMs = Date.now();
   let executionResult: Awaited<ReturnType<typeof executeToolWithScopedToken>>;
   try {
     executionResult = await executeToolWithScopedToken({
@@ -156,6 +158,42 @@ export async function POST(request: NextRequest) {
     );
   }
 
+  // ══════════════════════════════════════════════════════════════
+  // LAYER 4: POST-EXECUTION VERIFICATION
+  // ══════════════════════════════════════════════════════════════
+  const verification = await verifyPostExecution({
+    toolCall,
+    result: executionResult.result,
+    agentProfile,
+    scopeDecision,
+    executionStartMs,
+  });
+
+  // Quarantined → block result, return error
+  if (verification.status === 'quarantined') {
+    auditLog({
+      event: 'TOOL_EXECUTION_FAILED',
+      agentId: agentProfile.agentId,
+      ownerUserId: agentProfile.ownerUserId,
+      toolName: toolCall.name,
+      errorMessage: 'Result quarantined by Layer 4 post-execution verification',
+      metadata: {
+        auditId,
+        violations: verification.violations.map(v => `${v.type}: ${v.detail}`),
+      },
+    });
+    return NextResponse.json(
+      {
+        error: 'EXECUTION_FAILED',
+        message: 'Result quarantined — post-execution verification detected critical violations',
+        violations: verification.violations.map(v => `[${v.severity.toUpperCase()}] ${v.type}: ${v.detail}`),
+        auditId,
+      } satisfies GatewayError,
+      { status: 403 }
+    );
+  }
+
+  // ── Final audit log ──────────────────────────────────────────
   auditLog({
     event: 'TOOL_EXECUTED_SUCCESS',
     agentId: agentProfile.agentId,
@@ -168,8 +206,10 @@ export async function POST(request: NextRequest) {
     metadata: {
       auditId,
       reasoning: scopeDecision.reasoning,
+      verificationStatus: verification.status,
+      verificationViolations: verification.violations.length,
+      executionMs: verification.executionMs,
       tokenExpiresIn: executionResult.tokenInfo.expiresIn,
-      connection: executionResult.tokenInfo.connection,
     },
   });
 
@@ -190,6 +230,13 @@ export async function POST(request: NextRequest) {
       expiresIn: executionResult.tokenInfo.expiresIn,
       note: 'Short-lived scoped token — expires after use',
     },
-    result: executionResult.result,
+    verification: {
+      status: verification.status,
+      violations: verification.violations.length,
+      redacted: verification.violations.some(v => v.redacted),
+      executionMs: verification.executionMs,
+    },
+    // Return sanitized result (violations redacted if needed)
+    result: verification.sanitizedResult,
   });
 }

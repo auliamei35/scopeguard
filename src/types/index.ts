@@ -99,6 +99,33 @@ export interface ScopeDecision {
 }
 
 // ─────────────────────────────────────────────
+// LAYER 4: POST-EXECUTION VERIFICATION
+// ─────────────────────────────────────────────
+
+export type VerificationStatus = 'clean' | 'quarantined' | 'redacted';
+
+export interface VerificationViolation {
+  type:
+    | 'SENSITIVE_FIELD_LEAK'      // Response berisi field yang seharusnya blocked
+    | 'AMOUNT_DRIFT'              // Amount di response berbeda signifikan dari request
+    | 'SCOPE_OVERSHOOT'           // Response berisi data di luar scope yang diotorisasi
+    | 'PII_DETECTED'              // PII ditemukan di response yang tidak butuh PII
+    | 'ANOMALOUS_VOLUME';         // Response volume jauh melebihi ekspektasi
+  severity: 'low' | 'medium' | 'high' | 'critical';
+  field?: string;
+  detail: string;
+  redacted: boolean;
+}
+
+export interface PostExecutionResult {
+  status: VerificationStatus;
+  violations: VerificationViolation[];
+  sanitizedResult: unknown;         // Result setelah redaksi jika perlu
+  verifiedAt: Date;
+  executionMs: number;
+}
+
+// ─────────────────────────────────────────────
 // AUDIT LOG
 // ─────────────────────────────────────────────
 
@@ -116,6 +143,9 @@ export type AuditEventType =
   | 'STEPUP_TIMEOUT'
   | 'TOOL_EXECUTED_SUCCESS'
   | 'TOOL_EXECUTION_FAILED'
+  | 'POST_EXEC_CLEAN'
+  | 'POST_EXEC_VIOLATION'
+  | 'POST_EXEC_QUARANTINED'
   | 'AGENT_REVOKED';
 
 export interface AuditLogEntry {
@@ -172,7 +202,8 @@ export interface GatewayError {
     | 'SCOPE_CEILING_EXCEEDED'
     | 'STEPUP_DENIED'
     | 'STEPUP_TIMEOUT'
-    | 'EXECUTION_FAILED';
+    | 'EXECUTION_FAILED'
+    | 'VERIFICATION_BLOCKED';
   message: string;
   violations?: string[];
   auditId: string;

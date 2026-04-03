@@ -82,6 +82,15 @@ email:send             Send emails on behalf of user
 | `search_flights` | payment:write, calendar:events:write, email:send | 0 | 100% |
 | `book_flight $500` | payment:write, calendar:events:write, email:send | 2 | 33% |
 
+### Post-Execution Verification (Layer 4)
+
+| Check | Configuration |
+|-------|--------------|
+| Sensitive field leak | Scans for blocked data fields in response |
+| Amount drift | Flags if response amount differs >5% from request |
+| Anomalous volume | Threshold: [per-tool value] bytes |
+| PII detection | [Enabled/Disabled based on tool set] |
+
 ---
 
 ## Agent 2: Fraud Detection Agent
@@ -124,6 +133,15 @@ account:read        Read account information (read-only)
 | Allowed domains | `api.bri.co.id`, `api.bca.co.id` | Others hard blocked |
 | Max actions/min | **3** | Strict velocity — fraud agents must not batch |
 | Forbidden scopes | `transaction:approve`, `account:write`, `account:delete`, `transfer:execute` | Never executable |
+
+### Post-Execution Verification (Layer 4)
+
+| Check | Configuration |
+|-------|--------------|
+| Sensitive field leak | Scans for blocked data fields in response |
+| Amount drift | Flags if response amount differs >5% from request |
+| Anomalous volume | Threshold: [per-tool value] bytes |
+| PII detection | [Enabled/Disabled based on tool set] |
 
 ### Demo Scenarios
 
@@ -204,6 +222,15 @@ alert:write         Submit compliance alerts
 | Allowed domains | `akun.bri.co.id`, `api.bri.co.id` | Others hard blocked |
 | Max actions/min | 5 | Standard velocity |
 | Forbidden scopes | `transaction:approve`, `account:write`, `transfer:execute`, `kyc:delete` | Hard block |
+
+### Post-Execution Verification (Layer 4)
+
+| Check | Configuration |
+|-------|--------------|
+| Sensitive field leak | Scans for blocked data fields in response |
+| Amount drift | Flags if response amount differs >5% from request |
+| Anomalous volume | Threshold: [per-tool value] bytes |
+| PII detection | [Enabled/Disabled based on tool set] |
 
 ### AML-Specific Constraints (unique to this agent)
 
@@ -311,6 +338,15 @@ onboarding:write   Create and manage onboarding workflows
 | Allowed domains | `api.hr.internal`, `api.directory.internal` | All external domains blocked |
 | Max actions/min | 10 | Standard for HR workflows |
 | Forbidden scopes | `employee:delete`, `payroll:write`, `payroll:read`, `medical:read`, `medical:write`, `performance:delete` | Never accessible |
+
+### Post-Execution Verification (Layer 4)
+
+| Check | Configuration |
+|-------|--------------|
+| Sensitive field leak | Scans for blocked data fields in response |
+| Amount drift | Flags if response amount differs >5% from request |
+| Anomalous volume | Threshold: [per-tool value] bytes |
+| PII detection | [Enabled/Disabled based on tool set] |
 
 ### Data Classification (unique to this agent)
 
