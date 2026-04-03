@@ -169,7 +169,7 @@ function humanizeEvent(log: AuditLogEntry): {
   }
 }
 
-// ── Icons (SVG outline, no emoji) ────────────────────────────────
+// ── Icons (SVG outline) ────────────────────────────────
 const IconShield = () => (
   <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
     <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
@@ -854,13 +854,65 @@ export default function DashboardPage() {
                   Live
                 </div>
               )}
-              <button className="btn btn-ghost" onClick={fetchData}>
-                <IconRefresh />
+              <button 
+                className="btn btn-ghost" 
+                onClick={fetchData}
+                style={{
+                  // Efek visual saat pulse bernilai true
+                  transform: pulse ? 'scale(1.05)' : 'scale(1)',
+                  borderColor: pulse ? 'var(--blue-l)' : 'var(--border2)',
+                  transition: 'all 0.2s ease'
+                }}
+               >
+                {/* Icon akan berputar atau berubah warna saat pulse aktif */}
+                <span style={{ 
+                  display: 'flex', 
+                  color: pulse ? 'var(--blue-l)' : 'inherit',
+                  transition: 'color 0.2s'
+                }}>
+                  <IconRefresh />
+               </span>
                 Refresh
-              </button>
+            </button>
               <button className="btn btn-primary" onClick={runDemo} disabled={demoRunning}>
                 <IconPlay />
                 {demoRunning ? 'Demo running...' : 'Run Demo'}
+              </button>
+              
+              <button
+                className="btn btn-ghost"
+                onClick={async () => {
+                  await fetch('/api/demo/fraud', { method: 'POST' });
+                  setAutoRefresh(true);
+                  setTimeout(() => setAutoRefresh(false), 40000);
+                }}
+                style={{ borderColor: 'rgba(239,68,68,0.3)', color: '#f87171' }}
+              >
+              Run Fraud Demo
+              </button>
+
+              <button
+                className="btn btn-ghost"
+                onClick={async () => {
+                  await fetch('/api/demo/aml', { method: 'POST' });
+                  setAutoRefresh(true);
+                  setTimeout(() => setAutoRefresh(false), 45000);
+                }}
+                style={{ borderColor: 'rgba(245,158,11,0.3)', color: '#fbbf24' }}
+              >
+              Run AML Demo
+              </button>
+
+              <button
+                className="btn btn-ghost"
+                onClick={async () => {
+                  await fetch('/api/demo/hr', { method: 'POST' });
+                  setAutoRefresh(true);
+                  setTimeout(() => setAutoRefresh(false), 45000);
+                }}
+                style={{ borderColor: 'rgba(16,185,129,0.3)', color: '#34d399' }}
+              >
+              Run HR Demo
               </button>
             </div>
           </div>

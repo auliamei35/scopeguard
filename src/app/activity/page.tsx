@@ -35,6 +35,8 @@ const EVENT_META: Record<string, { label: string; color: string; bg: string }> =
   TOOL_EXECUTED_SUCCESS:   { label: 'Completed',           color: '#10b981', bg: 'rgba(16,185,129,0.1)' },
   TOOL_EXECUTION_FAILED:   { label: 'Failed',              color: '#ef4444', bg: 'rgba(239,68,68,0.1)' },
   AGENT_REVOKED:           { label: 'Agent Revoked',       color: '#64748b', bg: 'rgba(100,116,139,0.1)' },
+  DATA_ACCESS_BLOCKED:     { label: 'Data Blocked',        color: '#ef4444', bg: 'rgba(239,68,68,0.1)' },
+  DATA_STEPUP_REQUIRED:    { label: 'Sensitive Data',      color: '#8b5cf6', bg: 'rgba(139,92,246,0.1)' },
 };
 
 const ALL_FILTER = 'ALL';

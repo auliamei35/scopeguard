@@ -1,31 +1,22 @@
 // src/app/rules/page.tsx
-'use client';
+
+// src/app/rules/page.tsx
 
 import Link from 'next/link';
-import { getAllAgents } from '@/lib/agent-registry';
-import { useEffect, useState } from 'react';
+import { getAllAgents } from '@/lib/agent-registry'; 
 
+// ── Icons ─────────────────────────────────────────────
 const IconArrowLeft = () => (
   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
     <line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/>
   </svg>
 );
+
 const IconShield = () => (
   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
     <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
   </svg>
 );
-
-interface AgentRule {
-  agentId: string;
-  limits: {
-    maxTransactionUSD: number;
-    stepUpThresholdUSD: number;
-    allowedDomains: string[];
-    maxActionsPerMinute: number;
-    forbiddenScopes: string[];
-  };
-}
 
 const GLOBAL_RULES = [
   { id: 'R-001', name: 'Mandatory Agent Identity', description: 'Every request must carry a valid Auth0 M2M token with agent_id claim. Requests without registered agent identity are rejected at Layer 1 before any processing occurs.', layer: 'L1', status: 'enforced', severity: 'critical' },
@@ -43,6 +34,7 @@ const SEVERITY_STYLE: Record<string, { bg: string; color: string }> = {
   high:     { bg: 'rgba(245,158,11,0.1)', color: '#f59e0b' },
   medium:   { bg: 'rgba(59,130,246,0.1)', color: '#3b82f6' },
 };
+
 const LAYER_STYLE: Record<string, { bg: string; color: string }> = {
   L1:   { bg: 'rgba(59,130,246,0.12)', color: '#60a5fa' },
   L2:   { bg: 'rgba(239,68,68,0.12)', color: '#f87171' },
@@ -52,17 +44,9 @@ const LAYER_STYLE: Record<string, { bg: string; color: string }> = {
   Audit:{ bg: 'rgba(100,116,139,0.12)', color: '#94a3b8' },
 };
 
-export default function SecurityRulesPage() {
-  const [agentRules, setAgentRules] = useState<AgentRule[]>([]);
-
-  useEffect(() => {
-    fetch('/api/agents').then(r => r.json()).then(d => {
-      setAgentRules((d.agents ?? []).map((a: AgentRule & { agentId: string }) => ({
-        agentId: a.agentId,
-        limits: a.limits,
-      })));
-    });
-  }, []);
+export default async function SecurityRulesPage() {
+  // HIGHLIGHT: Mengambil data langsung dari server registry
+  const agents = getAllAgents();
 
   return (
     <>
@@ -122,7 +106,7 @@ export default function SecurityRulesPage() {
           })}
         </div>
 
-        {agentRules.length > 0 && (
+        {agents.length > 0 && (
           <>
             <div className="section-title">Per-agent hard limits</div>
             <div className="agent-limits">
@@ -138,13 +122,22 @@ export default function SecurityRulesPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {agentRules.map(r => (
-                    <tr key={r.agentId}>
-                      <td style={{ fontFamily: 'var(--font)', fontWeight: 500, color: 'var(--text)' }}>{r.agentId}</td>
-                      <td style={{ color: '#ef4444' }}>${r.limits.maxTransactionUSD.toLocaleString()}</td>
-                      <td style={{ color: '#f59e0b' }}>${r.limits.stepUpThresholdUSD.toLocaleString()}</td>
-                      <td>{r.limits.maxActionsPerMinute}/min</td>
-                      <td style={{ fontSize: 11 }}>{r.limits.allowedDomains.join(', ')}</td>
+                  {agents.map(agent => (
+                    <tr key={agent.agentId}>
+                      <td style={{ fontFamily: 'var(--font)', fontWeight: 500, color: 'var(--text)' }}>
+                        {agent.agentId.split('-')[0]} agent
+                      </td>
+                      <td style={{ color: agent.hardLimits.maxTransactionAmountUSD === 0 ? 'var(--text-3)' : '#ef4444' }}>
+                        {agent.hardLimits.maxTransactionAmountUSD === 0 ? 'N/A' : `$${agent.hardLimits.maxTransactionAmountUSD.toLocaleString()}`}
+                      </td>
+                      <td style={{ color: '#f59e0b' }}>
+                        {agent.hardLimits.requiresStepUpAboveUSD === 0 ? 'Always' : `$${agent.hardLimits.requiresStepUpAboveUSD.toLocaleString()}`}
+                      </td>
+                      <td>{agent.hardLimits.maxActionsPerMinute}/min</td>
+                      <td style={{ fontSize: 11, color: 'var(--text-2)' }}>
+                        {agent.hardLimits.allowedDomains.slice(0, 2).join(', ')}
+                        {agent.hardLimits.allowedDomains.length > 2 ? '...' : ''}
+                      </td>
                     </tr>
                   ))}
                 </tbody>

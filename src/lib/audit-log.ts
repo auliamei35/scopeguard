@@ -34,6 +34,8 @@ export function auditLog(params: LogParams): AuditLogEntry {
     IDENTITY_REJECTED: '🔴',
     CONSTRAINT_PASSED: '🟢',
     CONSTRAINT_BLOCKED: '🔴',
+    DATA_ACCESS_BLOCKED: '🚫',
+    DATA_STEPUP_REQUIRED:'🔒',
     SCOPE_DECIDED: '🟡',
     STEPUP_TRIGGERED: '🟠',
     STEPUP_APPROVED: '🟢',

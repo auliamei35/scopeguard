@@ -15,6 +15,15 @@ export interface AgentHardLimits {
   maxActionsPerMinute: number;          // Velocity cap
   forbiddenScopes: string[];            // Scope yang tidak pernah boleh diminta
   requiresStepUpAboveUSD: number;       // Threshold untuk CIBA step-up
+  // AML-specific
+  highRiskCountries?: string[];        // ISO 3166-1 alpha-2 codes
+  sarThresholdUSD?: number;            // Suspicious Activity Report threshold
+  blockedCountries?: string[];         // Hard block — no override
+  // HR-specific
+  allowedDataFields?: string[];         // Whitelist field yang boleh dibaca
+  blockedDataFields?: string[];         // Field yang TIDAK PERNAH boleh dibaca
+  dataRetentionDays?: number;           // Berapa lama data boleh di-cache
+  requiresStepUpForFields?: string[];   // Field yang butuh step-up sebelum akses
 }
 
 export interface AgentProfile {
@@ -98,6 +107,8 @@ export type AuditEventType =
   | 'IDENTITY_REJECTED'
   | 'CONSTRAINT_PASSED'
   | 'CONSTRAINT_BLOCKED'
+  | 'DATA_ACCESS_BLOCKED'
+  | 'DATA_STEPUP_REQUIRED'
   | 'SCOPE_DECIDED'
   | 'STEPUP_TRIGGERED'
   | 'STEPUP_APPROVED'
