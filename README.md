@@ -168,7 +168,7 @@ scopeguard/
 ### 1. Clone and Install
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/scopeguard.git
+git clone https://github.com/auliamei35/scopeguard.git
 cd scopeguard
 pnpm install
 ```
