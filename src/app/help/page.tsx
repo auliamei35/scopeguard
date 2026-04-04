@@ -44,7 +44,6 @@ export default function HelpPage() {
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap');
         *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
-        :root{--bg:#0a0e1a;--surface:#111827;--surface2:#1a2235;--border:rgba(255,255,255,0.06);--border2:rgba(255,255,255,0.12);--text:#f1f5f9;--text-2:#94a3b8;--text-3:#475569;--font:'DM Sans',sans-serif}
         body{background:var(--bg);font-family:var(--font);color:var(--text)}
         .page{max-width:720px;margin:0 auto;padding:40px 24px 80px}
         .back-link{display:inline-flex;align-items:center;gap:6px;color:var(--text-3);font-size:13px;text-decoration:none;margin-bottom:28px}

@@ -1,24 +1,26 @@
 # Gemini Integration in ScopeGuard
 
-ScopeGuard uses Google Gemini as the **Layer 3 LLM Intent Analyzer** — the semantic reasoning engine that determines the minimal set of OAuth scopes needed for each specific tool call. This document explains the design, implementation, and observed behavior.
+ScopeGuard uses Google Gemini as the **Layer 3 LLM Intent Analyzer** — the semantic reasoning engine that determines the minimal set of OAuth scopes needed for each specific tool call. This document covers the model selection, implementation, observed behavior, interaction with Layer 4, and troubleshooting.
 
 ---
 
 ## Role in the Architecture
 
 ```
-Layer 1 (Auth0 M2M)   →  Who is the agent?
-Layer 2 (Pure Code)   →  Are hard limits respected? (LLM-proof)
-Layer 3 (Gemini) ─────→  What is the MINIMAL scope for this action?
-CIBA (Auth0)          →  Does the user approve? (if high-stakes)
-Token Vault (Auth0)   →  Issue scoped token
+Layer 1 (Auth0 M2M)        →  Who is the agent?
+Layer 2 (Pure Code)        →  Are hard limits respected? (LLM-proof)
+Layer 3 (Gemini) ──────────→  What is the MINIMAL scope for this action?
+CIBA (Auth0)               →  Does the user approve? (if high-stakes)
+Token Vault (Auth0)        →  Issue scoped token
+Layer 4 (Multi-layer PII)  →  Is the output safe to return?
 ```
 
 **Critical design principle:** Gemini runs *after* Layer 2. This means:
 
 - Gemini can only recommend scopes within the agent's declared capabilities
-- Gemini cannot override hard constraints — they already passed
-- If Gemini fails (quota, timeout, error), ScopeGuard falls back to conservative defaults (all declared scopes + step-up required) and continues — it never blocks execution due to LLM failure
+- Gemini cannot override hard constraints — they already passed before Gemini is called
+- If Gemini fails (quota, timeout, error), ScopeGuard uses conservative fallback and continues — it never blocks execution due to LLM failure
+- Gemini's output feeds into Layer 4 — the `scopeDecision` is used to check scope overshoot in the response
 
 ---
 
@@ -26,21 +28,26 @@ Token Vault (Auth0)   →  Issue scoped token
 
 **Model used:** `gemini-2.5-flash`
 
-**Why not `gemini-2.0-flash`?**
-- `gemini-2.0-flash` hit free tier quota limits during development
-- `gemini-1.5-flash` returned 404 (deprecated in v1beta API)
-- `gemini-2.5-flash` is available on free tier with separate quota, faster response, and supports structured output natively
+### Why not `gemini-2.0-flash`?
 
-**Why not `gemini-2.5-pro`?**
-- Pro is higher quality but slower and more expensive
-- For scope classification (a structured, bounded task), Flash is more than sufficient
-- Pro would be appropriate if the analysis involved complex reasoning across many documents
+During development, `gemini-2.0-flash` hit free tier quota limits (`limit: 0` for the project). This triggers `AI_RetryError` after 3 attempts. The Vercel AI SDK handles retries automatically, but after all attempts fail, ScopeGuard falls back to conservative defaults.
 
-**Checking available models for your API key:**
+### Why not `gemini-1.5-flash`?
+
+Returns HTTP 404: `models/gemini-1.5-flash is not found for API version v1beta`. The model was deprecated in the v1beta API endpoint used by `@ai-sdk/google`.
+
+### Why not `gemini-2.5-pro`?
+
+Pro is higher quality but slower response time and higher token cost. For scope classification — a structured, bounded task with a small input/output — Flash is more than sufficient. Pro would be appropriate only if the analysis involved complex reasoning across many documents simultaneously.
+
+### Checking available models for your API key
+
 ```bash
 curl -s "https://generativelanguage.googleapis.com/v1beta/models?key=YOUR_GEMINI_API_KEY" \
   | jq '.models[].name'
 ```
+
+Then update `src/lib/gemini.ts` with the correct model string if needed.
 
 ---
 
@@ -50,8 +57,8 @@ curl -s "https://generativelanguage.googleapis.com/v1beta/models?key=YOUR_GEMINI
 
 1. Go to https://aistudio.google.com/apikeys
 2. Click **Create API Key**
-3. Select your Google Cloud project
-4. Copy the key
+3. Select your Google Cloud project (or create one)
+4. Copy the key — starts with `AIzaSy`
 
 ### 2. Add to Environment
 
@@ -93,10 +100,10 @@ export function getGeminiModel() {
 
 **Design decisions:**
 - Singleton client — avoids re-initializing on every request
-- Model is called at invocation time (not module load) — allows hot-swapping model without restart
-- No streaming — structured output requires complete response
+- Model called at invocation time (not module load) — allows model hot-swap without restart
+- No streaming — structured output requires a complete response before Zod validation
 
-### Structured Output Schema (`src/gateway/layer3-analyzer.ts`)
+### Structured Output Schema
 
 ```typescript
 import { generateObject } from 'ai';
@@ -124,13 +131,9 @@ const ScopeDecisionSchema = z.object({
 });
 ```
 
-**Why `generateObject` instead of `generateText`?**
-
-`generateObject` with a Zod schema enforces that Gemini returns parseable, typed JSON. Without this, the response might be natural language, markdown-wrapped JSON, or inconsistently structured. The Vercel AI SDK handles retry logic and schema enforcement automatically.
+**Why `generateObject` instead of `generateText`:** `generateObject` with Zod schema enforces parseable, typed JSON. Without this, the response might be natural language, markdown-wrapped JSON, or inconsistently structured. Vercel AI SDK handles retry logic and schema enforcement automatically.
 
 ### Prompt Design
-
-The prompt passed to Gemini has three key sections:
 
 ```typescript
 function buildAnalyzerPrompt(toolCall, agentProfile, constraintResult): string {
@@ -152,7 +155,7 @@ Your job: determine the MINIMAL scopes needed for this specific action.
 - Step-up already required by hard constraints: ${constraintResult.requiresStepUp}
 
 ## Your Task
-1. From the agent's declared capabilities, select ONLY the scopes truly needed for THIS specific tool call
+1. From the agent's declared capabilities, select ONLY the scopes truly needed
 2. Assess risk level based on: reversibility, amount, data sensitivity
 3. Write a plain English explanation (max 2 sentences) for the user consent modal
 
@@ -161,35 +164,39 @@ Your job: determine the MINIMAL scopes needed for this specific action.
 - Never add scopes not in the declared capabilities list
 - If the tool is read-only, never include write scopes
 - naturalLanguageExplanation must be in English, clear, non-technical
-- For payment actions, always mention the exact amount and destination if available
+- For payment actions, always mention the exact amount and destination
 `.trim();
 }
 ```
 
-**Key prompt design decisions:**
+**Key design decisions:**
 
-1. **Scope ceiling is explicit** — Gemini is told exactly what the maximum scopes are. It cannot hallucinate new scopes.
-2. **Hard constraints are included** — Gemini sees the constraint results so it can incorporate them into its reasoning (e.g., if step-up is already required by L2, Gemini knows not to flag it again as a surprise).
-3. **Minimal scope instruction is explicit** — "select ONLY the scopes truly needed" with emphasis prevents Gemini from being overly permissive.
-4. **Natural language explanation** — This output directly powers the CIBA `bindingMessage` and the consent modal text.
+1. **Scope ceiling is explicit** — Gemini is told the maximum allowed scopes, cannot hallucinate new ones
+2. **Hard constraints included** — Gemini incorporates L2 results, avoids redundant step-up flags
+3. **"ONLY" is explicit** — prevents Gemini from being overly permissive out of caution
+4. **Natural language output** — directly powers CIBA `bindingMessage` and consent modal
 
 ---
 
 ## Observed Behavior
 
-### Travel Agent Scenarios
+### Scope Minimization Results
 
-| Tool Call | Declared Scopes | Gemini Selected | Reduction |
-|-----------|----------------|-----------------|----------:|
-| `search_flights` (Bali, read-only) | 3 | 0 | **100%** |
-| `book_flight` ($500, Tokyo) | 3 | 2 (payment:write, email:send) | 33% |
-| `book_hotel` ($200, Bali) | 3 | 2 | 33% |
+| Agent | Tool Call | Declared (N scopes) | Gemini Selected | Reduction |
+|-------|-----------|--------------------|-----------------|---------:|
+| Travel | `search_flights` | 3 | 0 | **100%** |
+| Travel | `book_flight $500` | 3 | 2 | 33% |
+| Fraud | `check_transaction $200` | 4 | 1 (transaction:read) | 75% |
+| Fraud | `flag_transaction $2000` | 4 | 2 | 50% |
+| AML | `check_aml` domestic | 6 | 2 | 67% |
+| AML | `file_sar $15K` | 6 | 2 (transaction:read, sar:write) | 67% |
+| HR | `create_onboarding_task` | 5 | 2 (employee:read, onboarding:write) | 60% |
 
-**Notable:** For `search_flights`, Gemini correctly determined that a flight search requires no OAuth scopes at all — it's a read-only lookup that doesn't touch user credentials. This is the most impactful reduction.
+**Notable finding for `search_flights`:** Gemini correctly determined that a flight search requires *zero* OAuth scopes — it's a read-only query that doesn't touch user credentials. This is the maximum possible reduction.
 
-**Why not `calendar:events:write` for flight booking?** Gemini assessed that booking confirmation via email (`email:send`) is sufficient — calendar creation is optional and should be a separate agent action with separate consent.
+**Notable finding for `book_flight`:** Gemini selected `payment:write` and `email:send`, but *not* `calendar:events:write`. It assessed that calendar creation is optional and should be a separate user action with separate consent — a non-obvious but correct decision.
 
-### Gemini Natural Language Explanations (observed)
+### Natural Language Explanations (observed)
 
 ```
 search_flights →
@@ -200,28 +207,80 @@ book_flight $500 →
 "This action will book a flight to Tokyo for $500 using your payment method
 and send you a confirmation email. This action cannot be undone."
 
-check_transaction $200 (fraud agent) →
+check_transaction $200 (fraud) →
 "The agent will analyze a $200 transaction for suspicious patterns.
 This is a read-only review and will not modify any account data."
+
+file_sar $15K (AML) →
+"The agent will file a Suspicious Activity Report for a $15,000 transaction
+with the PPATK compliance authority. This action is required by regulation."
+
+get_employee_documents (HR, id_card field) →
+"The agent needs to access employee identity documents including ID card
+and contract. These are sensitive documents that require your approval."
 ```
 
-These explanations are used verbatim in:
-1. The CIBA `bindingMessage` (what appears in the step-up modal)
-2. The `scopeDecision.explanation` field returned by the gateway
-3. The activity feed in the dashboard (humanized event descriptions)
+These are used verbatim in:
+1. The CIBA `bindingMessage` — what appears in the step-up approval modal
+2. The `scopeDecision.explanation` field returned by the gateway API
+3. The activity feed in the dashboard
+4. The Layer 4 audit log for quarantined results (context for security review)
+
+---
+
+## Interaction with Layer 4
+
+Gemini's `ScopeDecision` output is used by Layer 4 in two ways:
+
+### 1. Scope Overshoot Check
+
+```typescript
+// Layer 4 reads minimalScopes from Gemini's decision
+const hasWriteScope = scopeDecision.minimalScopes.some(s => s.includes(':write'));
+
+// If Gemini said "no write scopes needed" but response contains write indicators:
+if (!hasWriteScope) {
+  for (const indicator of WRITE_INDICATORS) {
+    if (resultStr.toLowerCase().includes(indicator)) {
+      violations.push({ type: 'SCOPE_OVERSHOOT', severity: 'high', ... });
+    }
+  }
+}
+```
+
+**Example:** Gemini determines `search_flights` needs 0 scopes (read-only). If the mock/real backend returns a response containing `rows_deleted` or `mutation_id`, Layer 4 flags it as scope overshoot.
+
+### 2. Context in Quarantine Audit Logs
+
+When Layer 4 quarantines a result, the audit entry includes:
+- Gemini's `naturalLanguageExplanation` — what was being attempted
+- Gemini's `reasoning` — what the LLM thought about the action
+- Layer 4 violation details — what went wrong in the output
+
+This gives security teams full context: intent, authorization decision, and actual output anomaly — all in one audit record.
+
+### Why Layer 4 Is Necessary Even With Gemini
+
+Gemini determines what scopes are *requested*. Layer 4 verifies what data is *actually returned*. These are different problems:
+
+- Gemini: "This search needs 0 scopes" ✓
+- Backend: Returns employee salary data in search results due to misconfiguration
+- Layer 4: Detects `salary` field in response → flags SENSITIVE_FIELD_LEAK → quarantines
+
+This addresses the **EchoLeak class of attacks** (OWASP ASI01): authorization checked at retrieval, not at output.
 
 ---
 
 ## Fallback Behavior
 
-When Gemini is unavailable (quota exceeded, timeout, network error):
+When Gemini is unavailable:
 
 ```typescript
 } catch (err) {
   console.error('[ScopeGuard] Layer 3 LLM failed, using fallback:', err);
   scopeDecision = {
-    minimalScopes: agentProfile.declaredCapabilities,  // Use ALL declared scopes
-    riskLevel: 'high',                                  // Conservative risk level
+    minimalScopes: agentProfile.declaredCapabilities,  // All declared scopes
+    riskLevel: 'high',                                  // Conservative
     requiresStepUp: true,                               // Force human approval
     naturalLanguageExplanation:
       'The agent is requesting access to perform an action. Please review and approve.',
@@ -231,63 +290,23 @@ When Gemini is unavailable (quota exceeded, timeout, network error):
 }
 ```
 
-**Why this is the right behavior:**
+**Why this is correct behavior:**
 - Execution is not blocked — the agent can still complete its task
-- Security is not degraded — the fallback is *more* restrictive, not less
-- The user gets a step-up prompt — they make the final decision
-- The audit log records `reasoning: 'LLM analyzer unavailable'` — full transparency
+- Security is not degraded — fallback is *more* restrictive, not less
+- User gets a step-up prompt — they make the final decision
+- Audit log records `'LLM analyzer unavailable'` — full transparency
+- Layer 4 still runs on the result — output verification is unaffected by L3 failure
 
 ---
 
-## Free Tier Limits and Rate Management
+## Free Tier Limits
 
-Google Gemini free tier limits (as of April 2026):
+| Model | Requests/min | Requests/day |
+|-------|-------------|-------------|
+| gemini-2.5-flash | 10 | 500 |
+| gemini-2.0-flash | 15 | 1,500 |
 
-| Model | Requests/min | Requests/day | Tokens/min |
-|-------|-------------|-------------|-----------|
-| gemini-2.5-flash | 10 | 500 | 250,000 |
-| gemini-2.0-flash | 15 | 1,500 | 1,000,000 |
-
-**For hackathon demo purposes**, the free tier is sufficient.
-
-**If you hit rate limits:**
-
-1. Wait 60 seconds (per-minute quota resets)
-2. Switch to `gemini-2.0-flash` in `src/lib/gemini.ts` if that model's quota is available
-3. Enable billing on Google Cloud for higher limits
-
-**In production**, you would:
-- Enable billing (pay-per-use)
-- Implement request caching for identical tool calls
-- Use `gemini-2.5-flash` (efficient) for most requests, `gemini-2.5-pro` for high-stakes decisions only
-
----
-
-## Troubleshooting
-
-### `Expected 200 OK from the JSON Web Key Set HTTP response`
-
-Not a Gemini issue — this is the JWKS fetch failing for Layer 1. Check `AUTH0_ISSUER_BASE_URL` in `.env.local` includes the `.us.` regional subdomain: `https://YOUR-TENANT.us.auth0.com`
-
-### `models/gemini-2.5-flash is not found for API version v1beta`
-
-The model name changed. Check available models:
-```bash
-curl -s "https://generativelanguage.googleapis.com/v1beta/models?key=YOUR_KEY" | jq '.models[].name'
-```
-
-Then update `src/lib/gemini.ts` with the correct model string.
-
-### `Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests`
-
-Free tier daily limit hit. Options:
-1. Wait until tomorrow (quota resets daily)
-2. Enable billing in Google Cloud Console
-3. Create a new Google Cloud project with a new API key
-
-### `AI_RetryError: Failed after 3 attempts`
-
-Vercel AI SDK automatically retries failed requests. After 3 failures, it throws. The ScopeGuard fallback catches this and continues with conservative defaults.
+For hackathon demo purposes, the free tier is sufficient. If rate limited, wait 60 seconds (per-minute quota resets) or enable billing.
 
 ---
 
@@ -295,81 +314,68 @@ Vercel AI SDK automatically retries failed requests. After 3 failures, it throws
 
 ### Can Gemini be prompt-injected to bypass Layer 2?
 
-**No.** Layer 2 runs *before* Gemini is called. By the time Gemini is invoked:
-- Amount ceiling has already been checked
-- Domain whitelist has already been verified
-- Forbidden scopes have already been blocked
-- Country sanctions have already been enforced
-
-Even if Gemini were manipulated to return `minimalScopes: ['payment:admin']`, the scope ceiling check in Layer 2 would have already blocked the request before Gemini was reached.
+**No.** Layer 2 runs *before* Gemini is called. By the time Gemini is invoked, all hard constraints have already been verified by pure code. A prompt injection that reaches Gemini cannot retroactively bypass L2 checks that already ran.
 
 ### Can Gemini hallucinate scopes outside the declared set?
 
-**Not usefully.** The prompt explicitly instructs: "minimalScopes must be a SUBSET of: [declared capabilities]". Additionally, the gateway only exchanges tokens for scopes that Auth0 Token Vault is configured to issue — any hallucinated scope would fail at the Token Vault exchange step.
+**Not usefully.** The prompt explicitly states: "minimalScopes must be a SUBSET of: [declared capabilities]". Additionally, any hallucinated scope would fail at the Token Vault exchange step — Auth0 only issues tokens for scopes that are actually configured for the connection.
 
 ### What if Gemini recommends a wider scope than needed?
 
-This reduces the security benefit (less scope reduction) but does not create a security violation — the scope is still within the declared capabilities. The audit log records both `scopesGranted` (declared) and `scopesActuallyUsed` (Gemini's recommendation), so scope inflation is visible and auditable.
+This reduces the security benefit (less scope reduction in the audit log) but does not create a security violation — the wider scope is still within declared capabilities. The audit log records `scopesGranted` (declared) vs `scopesActuallyUsed` (Gemini's recommendation), so scope inflation is visible.
+
+### Does Gemini see sensitive data?
+
+The prompt includes tool call parameters, which may contain amounts and destinations but not user credentials. Auth0 Token Vault ensures credentials never appear in prompts — they are held server-side and exchanged separately.
 
 ---
 
-## Integration with Auth0 CIBA
+## Troubleshooting
 
-Gemini's `naturalLanguageExplanation` output becomes the CIBA `bindingMessage`:
+### `Expected 200 OK from the JSON Web Key Set HTTP response`
 
-```typescript
-// In src/lib/ciba.ts
-await requestStepUpApproval({
-  userId: agentProfile.ownerUserId,
-  agentId: agentProfile.agentId,
-  bindingMessage: scopeDecision.naturalLanguageExplanation,  // ← Gemini output
-  scopes: scopeDecision.minimalScopes,
-});
+Not a Gemini issue. JWKS fetch is failing for Layer 1. Check `AUTH0_ISSUER_BASE_URL` includes the regional subdomain: `https://YOUR-TENANT.us.auth0.com` (note `.us.`).
+
+### `models/gemini-X-Y is not found for API version v1beta, status 404`
+
+Model name has changed or been deprecated. Check available models:
+```bash
+curl -s "https://generativelanguage.googleapis.com/v1beta/models?key=YOUR_KEY" \
+  | jq '.models[].name'
 ```
+Update `src/lib/gemini.ts` with a valid model from the list.
 
-This means the approval notification a user receives is:
-- Written in natural language (not `payment:write, email:send`)
-- Specific to the exact action being requested
-- Accurate about what cannot be undone
+### `Quota exceeded for metric: generate_content_free_tier_requests, limit: 0`
 
-This is what makes consent **meaningful** — the user understands what they are approving.
+Daily free tier quota exhausted for this project. Options:
+1. Wait until tomorrow (quota resets daily)
+2. Enable billing in Google Cloud Console → pay-per-use
+3. Create a new Google Cloud project with a new API key
+
+### `AI_RetryError: Failed after 3 attempts`
+
+Vercel AI SDK automatically retried 3 times, all failed. ScopeGuard's fallback catches this and continues with conservative defaults — the request does not fail, it just uses all declared scopes with step-up required.
+
+### `Layer 3 LLM failed, using fallback` in console
+
+This is expected behavior when quota is hit. The fallback is designed to be safe:
+- All declared scopes issued (more permissive but not dangerous)
+- Step-up required (user must approve)
+- Layer 4 still verifies the output
+- Audit log records the fallback reason
 
 ---
-
-## Interaction with Layer 4 (Post-Execution Verification)
-
-Gemini's `scopeDecision` output is used by Layer 4 in two ways:
-
-**1. Scope overshoot check:**
-```typescript
-// Layer 4 reads minimalScopes from Gemini's decision
-const hasWriteScope = scopeDecision.minimalScopes.some(s => s.includes(':write'));
-// If no write scope authorized, flags write operation indicators in response
-```
-
-**2. Natural language in quarantine messages:**
-When Layer 4 quarantines a result, the audit log includes Gemini's
-`naturalLanguageExplanation` alongside the violation detail — providing
-full context for security review: what was being attempted, what
-the LLM thought was appropriate, and what went wrong in the output.
-
-**Why Layer 4 is necessary even with Layer 3:**
-Layer 3 determines what scopes are *requested*. Layer 4 verifies what
-data is *actually returned*. Even with correct scope minimization, a
-misconfigured backend could return more data than expected. Layer 4 is
-the output-side safety net that Layer 3 cannot provide.
 
 ## Future Improvements
 
-If extending ScopeGuard beyond the hackathon:
+1. **Response caching** — Hash (toolName + params + agentId) → cache Gemini's decision for identical requests. Reduces API calls and latency for repeated operations.
 
-1. **Caching** — Hash the (toolName + params + agentId) tuple; cache Gemini's scope decision for identical requests to reduce API calls and latency.
+2. **Fine-tuning** — A model fine-tuned on scope-decision pairs would be faster, cheaper, and more consistent than a general model with a long prompt.
 
-2. **Fine-tuning** — A fine-tuned model trained on scope-decision pairs would be faster, cheaper, and more consistent than a general model with a long prompt.
+3. **Multi-model routing** — `gemini-2.5-flash` for standard requests, escalate to `gemini-2.5-pro` for `riskLevel: critical` decisions or large parameter sets.
 
-3. **Multi-model** — Use `gemini-2.5-flash` for standard requests, escalate to `gemini-2.5-pro` for `riskLevel: critical` decisions.
+4. **Prompt versioning** — Version control the system prompt in the audit log. Different prompt versions yield different scope decisions; auditability requires knowing which version was used.
 
-4. **Prompt versioning** — Version control the system prompt. Different prompt versions may yield different scope decisions; the audit log should record which prompt version was used.
+5. **Feedback loop** — Track CIBA denial events correlated with specific Gemini explanations. User denials may indicate the explanation was unclear or the scope recommendation was too broad. This data improves prompt quality over time.
 
-5. **Feedback loop** — Track cases where users deny CIBA requests. This signals that either (a) the scope was correct but the user disagrees, or (b) the scope was too broad. This data can improve prompt quality over time.
-
+6. **L4 feedback to L3** — If Layer 4 repeatedly finds violations for a specific tool, escalate Gemini's risk assessment for that tool on subsequent calls — adaptive security posture.

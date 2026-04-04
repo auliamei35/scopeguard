@@ -97,7 +97,10 @@ See [AGENTS.md](./AGENTS.md) for full per-agent documentation.
 | LLM (Layer 3) | Google Gemini 2.5 Flash via Vercel AI SDK |
 | Structured Output | Zod schema validation |
 | JWT Verification | jose |
+| PII Validation | Luhn algorithm + NIK structure + context checks |
 | Deployment | Vercel |
+
+See [GEMINI.md](./GEMINI.md) for complete LLM integration documentation.
 
 ---
 
@@ -127,7 +130,8 @@ scopeguard/
 │   │   ├── layer1-identity.ts    # Auth0 JWT verification + agent registry lookup
 │   │   ├── layer2-constraints.ts # Hard constraints engine (LLM-proof)
 │   │   ├── layer3-analyzer.ts    # Gemini intent analysis + scope minimization
-│   │   └── layer4-verify.ts      # Post-Execution Verification Layer
+│   │   └── layer4-verify.ts      # Post-Execution Verification ((multi-layer PII,
+│   │                             #field leak, amount drift, scope overshoot)
 │   ├── lib/
 │   │   ├── agent-registry.ts     # In-memory agent store with lazy env resolution
 │   │   ├── audit-log.ts          # Structured audit trail with stats
@@ -268,12 +272,12 @@ curl -s -X POST http://localhost:3000/api/execute \
   -d '{"toolCall":{"name":"book_flight","params":{"destination":"Tokyo","amount":1500},"requiredConnection":"mock"}}' \
   | jq .
 
-# Test: valid booking with step-up
+# Test: valid booking with step-up + layer 4 clean
 curl -s -X POST http://localhost:3000/api/execute \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"toolCall":{"name":"book_flight","params":{"destination":"Tokyo","amount":500},"requiredConnection":"mock"}}' \
-  | jq .
+  | jq '{success, stepUpCompleted, "l4Status": .verification.status}'
 ```
 
 ---
@@ -366,39 +370,70 @@ const myAgent: AgentProfile = {
 
 ---
 
+## Layer 4: Post-Execution Verification
+
+Layer 4 addresses the **EchoLeak class of vulnerabilities** (OWASP ASI01) — where agents retrieve authorized data but the *output* contains data the recipient should not see.
+
+### Multi-Layer PII Detection
+
+PII detection uses four sequential validation layers, inspired by airport security:
+
+```
+Layer A: Allowlist
+  → Skip scan if value has system prefix (TXN-, BK-, CASE-...)
+  → Skip scan if field name is in safe set (transactionId, riskScore...)
+  → Skip scan if value matches UUID format
+        ↓ only if not allowlisted
+
+Layer B: Context / Sanity Check
+  → 13-digit number that converts to year 2020-2035? → Timestamp, skip
+  → 10-digit number in Unix timestamp range? → Timestamp, skip
+        ↓ only if passes context check
+
+Layer C: Algorithm Validation
+  → Run Luhn algorithm → valid? → Credit card confirmed (high confidence)
+  → Check NIK structure (province code 11-96, day 1-71, month 1-12)
+              → valid? → NIK confirmed (high confidence)
+        ↓ only high-confidence candidates trigger violations
+
+Layer D: Allowlist (post-algorithm)
+  → Double-check field name against safe set before flagging
+```
+
+**Result:** Zero false positives observed across all four agent demo suites (11 POST_EXEC_CLEAN events, 0 false quarantines).
+
+### Violation Severity → Action
+
+| Severity | Action | Agent Receives |
+|----------|--------|---------------|
+| `critical` | **Quarantine** | 403 — result blocked entirely |
+| `high` | **Redact** | Sanitized result with `[REDACTED BY SCOPEGUARD L4]` |
+| `low/medium` | **Flag** | Full result + violation in audit log |
+
+### Checks Performed
+
+| Check | Description | Affected Agents |
+|-------|-------------|-----------------|
+| Sensitive field leak | Blocked data fields found in response | HR agent |
+| Generic field patterns | salary, medical, password in any response | All |
+| Multi-layer PII | Luhn-validated credit card, NIK structure check | All |
+| Amount drift | Response amount ≠ request amount by >5% | Travel, Fraud, AML |
+| Scope overshoot | Write indicators in read-only authorized response | All |
+| Anomalous volume | Response size exceeds per-tool threshold | All |
+
+---
+
 ## Security Model
 
 ### What ScopeGuard Guarantees
 
-1. **Every agent has a unique identity** — no shared API keys, no user proxies
-2. **Hard limits cannot be overridden** — not by prompts, not by developers, not by the LLM
-3. **Every token is short-lived** — 300 second expiry, scoped to the minimum needed
-4. **Every action is auditable** — agent_id, scopes granted vs used, risk level, decision reason
-5. **High-stakes actions require human approval** — CIBA out-of-band before execution
+1. **Every agent has a unique cryptographic identity** — no shared API keys, no user proxies
+2. **Hard limits are absolute and LLM-proof** — prompt injection cannot override pure-code checks
+3. **Every token is short-lived and minimally scoped** — 300s expiry, only what this action needs
+4. **High-stakes actions require explicit human approval** — CIBA pauses agent before execution
+5. **Every output is verified before returning** — data exfiltration caught at the output layer
+6. **Every action is fully auditable** — agent_id, scopes granted vs used, L4 verification status
 
-### Layer 4: Post-Execution Verification
-
-ScopeGuard verifies not just what the agent is *allowed to do* (L1-L3), 
-but also whether the *result of execution* is safe to return.
-
-This addresses the "EchoLeak" class of vulnerabilities identified by 
-OWASP ASI01 — where agents retrieve authorized data but output it to 
-unauthorized recipients or channels.
-
-**Checks performed after every execution:**
-
-| Check | Trigger | Action |
-|-------|---------|--------|
-| Sensitive field leak | Blocked field found in response | Redact field + audit |
-| PII detection | PII pattern in non-PII tool response | Redact + audit |
-| Amount drift | Response amount ≠ requested amount by >5% | Flag + audit |
-| Scope overshoot | Write indicators in read-only response | Flag + audit |
-| Anomalous volume | Response size exceeds tool threshold | Flag + audit |
-
-**Violation severity → action:**
-- `critical` → **Quarantine**: result blocked, agent receives 403
-- `high` → **Redact**: violations removed, sanitized result returned
-- `low/medium` → **Flag**: result returned, violation logged
 
 ### What ScopeGuard Does NOT Do (Current MVP)
 
@@ -409,27 +444,29 @@ unauthorized recipients or channels.
 
 ---
 
-## Insights from Building ScopeGuard
+## Insights
 
-These findings are documented in the `/insights` dashboard page:
+Documented at `/insights` in the dashboard:
 
-1. **LLM alone cannot secure authorization** — hard constraints must precede LLM analysis
-2. **Agents routinely request more than they need** — Gemini reduced scope by 33-100% per action
-3. **Identity is the prerequisite for all other controls** — without `agent_id`, no control is attributable
-4. **Consent must be specific** — generic "please approve" has no value; Gemini-generated natural language explanation makes CIBA meaningful
+1. **LLM alone cannot secure authorization** — L2 must precede L3; prompt injection bypasses soft checks
+2. **Agents routinely over-declare** — Gemini reduced scope by 33–100% per action vs declared capabilities
+3. **Identity is the prerequisite** — without `agent_id`, no other control is attributable
+4. **Consent must be action-specific** — Gemini's natural language explanation makes CIBA meaningful
+5. **Authorization at input ≠ authorization at output** — Layer 4 closes the EchoLeak gap
 
 ---
 
 ## Gravitee Report Alignment
 
-ScopeGuard directly addresses the four structural gaps identified in the Gravitee State of AI Agent Security 2026 report:
+ScopeGuard addresses all four structural gaps from the Gravitee 2026 report:
 
-| Gravitee Finding | Stat | ScopeGuard Solution |
-|-----------------|------|---------------------|
-| No unique agent identity | 78% can't trace actions | Auth0 M2M per agent + `agent_id` claim |
-| Shared API keys | 45.6% use shared keys | Short-lived M2M tokens, zero standing credentials |
-| Hardcoded authorization | 27.2% use custom hardcoded logic | Centralized agent registry + gateway enforcement |
-| No audit trails | 57.4% cite this as top concern | Structured audit log: scopes granted vs used |
+| Gravitee Gap | Statistic | ScopeGuard Solution | Layer |
+|-------------|-----------|---------------------|-------|
+| No unique agent identity | 78% cannot trace actions | Auth0 M2M per agent + `agent_id` JWT claim | L1 |
+| Shared API keys | 45.6% use shared keys | Short-lived M2M tokens, zero standing credentials | L1 + TV |
+| Hardcoded authorization | 27.2% use custom code | Centralized registry + gateway enforcement | L2 |
+| No audit trails | 57.4% cite as top concern | Structured audit log: scopes granted vs used, L4 status | Audit |
+| Authorization at retrieval only | EchoLeak class (OWASP ASI01) | Layer 4 output verification with multi-layer PII scan | L4 |
 
 ---
 

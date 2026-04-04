@@ -1,8 +1,51 @@
 @import "tailwindcss";
 
+/* ── Default: Dark theme ── */
 :root {
   --background: #ffffff;
   --foreground: #171717;
+
+  /* ScopeGuard design tokens — dark mode (default) */
+  --bg:       #0a0e1a;
+  --surface:  #111827;
+  --surface2: #1a2235;
+  --surface3: #1e2d45;
+  --border:   rgba(255,255,255,0.06);
+  --border2:  rgba(255,255,255,0.12);
+  --blue:     #2563eb;
+  --blue-l:   #3b82f6;
+  --blue-xl:  #60a5fa;
+  --green:    #10b981;
+  --red:      #ef4444;
+  --orange:   #f59e0b;
+  --purple:   #8b5cf6;
+  --text:     #f1f5f9;
+  --text-2:   #94a3b8;
+  --text-3:   #475569;
+  --font:     'DM Sans', sans-serif;
+  --mono:     'JetBrains Mono', monospace;
+  --r:        12px;
+  --r-lg:     16px;
+}
+
+/* ── Light theme — applied via data-theme="light" on <html> ── */
+[data-theme="light"] {
+  --bg:       #f0f2f7;
+  --surface:  #ffffff;
+  --surface2: #f4f6fa;
+  --surface3: #e8ecf3;
+  --border:   rgba(0,0,0,0.07);
+  --border2:  rgba(0,0,0,0.13);
+  --blue:     #2563eb;
+  --blue-l:   #3b82f6;
+  --blue-xl:  #1d4ed8;
+  --green:    #059669;
+  --red:      #dc2626;
+  --orange:   #d97706;
+  --purple:   #7c3aed;
+  --text:     #0f172a;
+  --text-2:   #475569;
+  --text-3:   #94a3b8;
 }
 
 @theme inline {
@@ -10,13 +53,6 @@
   --color-foreground: var(--foreground);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
 }
 
 body {

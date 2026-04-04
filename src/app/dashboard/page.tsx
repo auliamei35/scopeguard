@@ -117,7 +117,7 @@ function humanizeEvent(log: AuditLogEntry): {
     case 'STEPUP_APPROVED':
       return {
         label: 'Approved',
-        labelColor: '#10b981',
+       labelColor: '#10b981',
         labelBg: 'rgba(16,185,129,0.1)',
         title: 'User Approved Request',
         detail: 'The user reviewed and approved the high-value action.',
@@ -155,6 +155,36 @@ function humanizeEvent(log: AuditLogEntry): {
         detail: `Minimal permissions calculated. Risk level: ${log.riskLevel || 'assessed'}.`,
         timeAgo,
         borderColor: '#8b5cf6',
+      };
+      case 'POST_EXEC_CLEAN':
+      return {
+        label: 'Output Verified',
+        labelColor: '#10b981',
+        labelBg: 'rgba(16,185,129,0.1)',
+        title: `${tool} — Output Clean`,
+        detail: 'Post-execution verification passed. No sensitive data leaks, PII, or anomalies detected in the response.',
+        timeAgo,
+        borderColor: '#10b981',
+      };
+    case 'POST_EXEC_VIOLATION':
+      return {
+        label: 'Output Redacted',
+        labelColor: '#f59e0b',
+        labelBg: 'rgba(245,158,11,0.1)',
+        title: `${tool} — Violation Detected`,
+        detail: 'Post-execution verification found violations. Sensitive data was redacted before returning to agent.',
+        timeAgo,
+        borderColor: '#f59e0b',
+      };
+    case 'POST_EXEC_QUARANTINED':
+      return {
+        label: 'Output Quarantined',
+        labelColor: '#ef4444',
+        labelBg: 'rgba(239,68,68,0.1)',
+        title: `${tool} — Result Quarantined`,
+        detail: 'Critical violation detected in response. Result was blocked and not returned to agent.',
+        timeAgo,
+        borderColor: '#ef4444',
       };
     default:
       return {
@@ -251,7 +281,6 @@ export default function DashboardPage() {
   const [autoRefresh, setAutoRefresh] = useState(false);
   const [activeNav, setActiveNav] = useState('dashboard');
   const [pulse, setPulse] = useState(false);
-
   const fetchData = useCallback(async () => {
     try {
       const res = await fetch('/api/audit');
@@ -274,7 +303,7 @@ export default function DashboardPage() {
   const runDemo = async () => {
     setDemoRunning(true);
     setAutoRefresh(true);
-    await fetch('/api/demo', { method: 'POST' });
+    await fetch('/api/demo/travel', { method: 'POST' });
     setTimeout(() => {
       setAutoRefresh(false);
       setDemoRunning(false);
@@ -292,34 +321,11 @@ export default function DashboardPage() {
 
         *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
-        :root {
-          --bg:       #0a0e1a;
-          --surface:  #111827;
-          --surface2: #1a2235;
-          --surface3: #1e2d45;
-          --border:   rgba(255,255,255,0.06);
-          --border2:  rgba(255,255,255,0.12);
-          --blue:     #2563eb;
-          --blue-l:   #3b82f6;
-          --blue-xl:  #60a5fa;
-          --green:    #10b981;
-          --red:      #ef4444;
-          --orange:   #f59e0b;
-          --purple:   #8b5cf6;
-          --text:     #f1f5f9;
-          --text-2:   #94a3b8;
-          --text-3:   #475569;
-          --font:     'DM Sans', sans-serif;
-          --mono:     'JetBrains Mono', monospace;
-          --r:        12px;
-          --r-lg:     16px;
-        }
-
         body { background: var(--bg); font-family: var(--font); color: var(--text); }
 
-        .layout { 
-          display: flex; 
-          min-height: 100vh; 
+        .layout {
+          display: flex;
+          min-height: 100vh;
           align-items: flex-start;
         }
 
@@ -420,16 +426,16 @@ export default function DashboardPage() {
         .agent-status { font-size: 11px; color: var(--text-2); margin-top: 1px; }
 
         /* ── Main ── */
-        .main { 
-          flex: 1; 
-          padding: 28px 32px; 
+        .main {
+          flex: 1;
+          padding: 28px 32px;
           min-width: 0;
         }
 
         /* Header */
         .header {
           display: flex;
-          align-items: flex-start;
+         align-items: flex-start;
           justify-content: space-between;
           margin-bottom: 28px;
         }
@@ -548,7 +554,7 @@ export default function DashboardPage() {
         }
 
         /* Activity feed */
-        .panel {
+     .panel {
           background: var(--surface);
           border: 1px solid var(--border);
           border-radius: var(--r-lg);
@@ -574,15 +580,15 @@ export default function DashboardPage() {
           margin-top: 2px;
         }
 
-        .activity-feed { 
-          overflow: visible; 
+        .activity-feed {
+          overflow: visible;
           height: auto;
         }
         .activity-feed::-webkit-scrollbar { width: 6px; }
         .activity-feed::-webkit-scrollbar-track { background: transparent; }
-        .activity-feed::-webkit-scrollbar-thumb { 
-          background: var(--border2); 
-          border-radius: 10px; 
+        .activity-feed::-webkit-scrollbar-thumb {
+          background: var(--border2);
+          border-radius: 10px;
         }
 
         .activity-item {
@@ -647,12 +653,12 @@ export default function DashboardPage() {
         .empty-state p { font-size: 13px; margin-top: 8px; }
 
         /* Right panel */
-        .right-col { 
-          display: flex; 
-          flex-direction: column; 
+        .right-col {
+          display: flex;
+          flex-direction: column;
           gap: 16px;
           position: sticky;
-          top: 28px; 
+          top: 28px;
         }
 
         /* Chart */
@@ -831,7 +837,7 @@ export default function DashboardPage() {
             <div className="agent-pill">
               <div className="agent-dot" />
               <div>
-                <div className="agent-name">Travel Agent</div>
+                <div className="agent-name">Agent Inc </div>
                 <div className="agent-status">Active · v1.0.0</div>
               </div>
             </div>
@@ -848,14 +854,14 @@ export default function DashboardPage() {
               <p className="header-sub">Real-time agent authorization monitoring</p>
             </div>
             <div className="header-actions">
-              {autoRefresh && (
+             {autoRefresh && (
                 <div className="live-badge">
                   <div className="live-dot" />
                   Live
                 </div>
               )}
-              <button 
-                className="btn btn-ghost" 
+              <button
+                className="btn btn-ghost"
                 onClick={fetchData}
                 style={{
                   // Efek visual saat pulse bernilai true
@@ -865,8 +871,8 @@ export default function DashboardPage() {
                 }}
                >
                 {/* Icon akan berputar atau berubah warna saat pulse aktif */}
-                <span style={{ 
-                  display: 'flex', 
+                <span style={{
+                  display: 'flex',
                   color: pulse ? 'var(--blue-l)' : 'inherit',
                   transition: 'color 0.2s'
                 }}>
@@ -966,8 +972,7 @@ export default function DashboardPage() {
                   </div>
                 )}
               </div>
-
-              <div className="activity-feed">
+             <div className="activity-feed">
                 {loading ? (
                   <div className="empty-state">
                     <IconPulse />

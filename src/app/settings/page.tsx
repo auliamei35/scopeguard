@@ -2,7 +2,8 @@
 'use client';
 
 import Link from 'next/link';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
+import { useTheme } from '@/contexts/ThemeContext';
 
 const IconArrowLeft = () => (
   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -14,6 +15,18 @@ export default function SettingsPage() {
   const [autoApprove, setAutoApprove] = useState(true);
   const [refreshInterval, setRefreshInterval] = useState('2');
   const [saved, setSaved] = useState(false);
+  const { theme, setTheme } = useTheme();
+
+  // State untuk menangani Hydration Mismatch
+  const [mounted, setMounted] = useState(false);
+
+  // useEffect hanya berjalan di sisi client setelah render pertama
+  useEffect(() => {
+    const timeout = setTimeout(() => {
+      setMounted(true);
+    }, 0);
+    return () => clearTimeout(timeout);
+  }, []);
 
   const save = () => {
     setSaved(true);
@@ -25,7 +38,6 @@ export default function SettingsPage() {
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap');
         *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
-        :root{--bg:#0a0e1a;--surface:#111827;--surface2:#1a2235;--border:rgba(255,255,255,0.06);--border2:rgba(255,255,255,0.12);--text:#f1f5f9;--text-2:#94a3b8;--text-3:#475569;--font:'DM Sans',sans-serif;--mono:'JetBrains Mono',monospace}
         body{background:var(--bg);font-family:var(--font);color:var(--text)}
         .page{max-width:680px;margin:0 auto;padding:40px 24px 80px}
         .back-link{display:inline-flex;align-items:center;gap:6px;color:var(--text-3);font-size:13px;text-decoration:none;margin-bottom:28px}
@@ -58,12 +70,58 @@ export default function SettingsPage() {
         .btn-primary{background:#2563eb;color:white}
         .btn-primary:hover{background:#1d4ed8}
         .btn-success{background:rgba(16,185,129,0.15);color:#10b981;border:0.5px solid rgba(16,185,129,0.2)}
+        .theme-options{display:flex;gap:10px}
+        .theme-btn{display:flex;align-items:center;gap:7px;padding:8px 16px;border-radius:8px;font-size:13px;font-weight:500;cursor:pointer;border:0.5px solid var(--border2);background:var(--surface2);color:var(--text-2);font-family:var(--font);transition:all 0.15s}
+        .theme-btn:hover{border-color:var(--border2);color:var(--text)}
+        .theme-btn.active{border-color:#2563eb;background:rgba(37,99,235,0.1);color:#2563eb}
       `}</style>
 
       <div className="page">
         <Link href="/dashboard" className="back-link"><IconArrowLeft /> Back to Dashboard</Link>
         <h1 className="page-title">Settings</h1>
         <p className="page-sub">Configure ScopeGuard gateway behavior and demo settings.</p>
+
+        {/* ── Appearance ── */}
+        <div className="section">
+          <div className="section-header">
+            <div className="section-title">Appearance</div>
+            <div className="section-sub">Choose your preferred color theme</div>
+          </div>
+          <div className="setting-row">
+            <div>
+              <div className="setting-label">Color theme</div>
+              <div className="setting-desc">Switch between dark and light interface</div>
+            </div>
+            <div className="theme-options">
+              <button
+                className={`theme-btn ${mounted && theme === 'dark' ? 'active' : ''}`}
+                onClick={() => setTheme('dark')}
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+                </svg>
+                Dark
+              </button>
+              <button
+                className={`theme-btn ${mounted && theme === 'light' ? 'active' : ''}`}
+                onClick={() => setTheme('light')}
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <circle cx="12" cy="12" r="5"/>
+                  <line x1="12" y1="1" x2="12" y2="3"/>
+                  <line x1="12" y1="21" x2="12" y2="23"/>
+                  <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/>
+                  <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/>
+                  <line x1="1" y1="12" x2="3" y2="12"/>
+                  <line x1="21" y1="12" x2="23" y2="12"/>
+                  <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/>
+                  <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>
+                </svg>
+                Light
+              </button>
+            </div>
+          </div>
+        </div>
 
         {/* CIBA settings */}
         <div className="section">

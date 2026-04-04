@@ -8,23 +8,221 @@ import type {
   VerificationStatus,
 } from '@/types';
 
-// ── PII patterns untuk deteksi kebocoran ─────────────────────────
-const PII_PATTERNS: Array<{ name: string; pattern: RegExp; severity: 'low' | 'medium' | 'high' | 'critical' }> = [
-  { name: 'Credit card number',  pattern: /\b(?:\d[ -]?){13,16}\b/,                    severity: 'critical' },
-  { name: 'Indonesian NIK',      pattern: /\b[1-9]\d{15}\b/,                            severity: 'critical' },
-  { name: 'Bank account',        pattern: /\b\d{10,16}\b/,                              severity: 'high'     },
-  { name: 'Email address',       pattern: /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-z]{2,}/, severity: 'medium' },
-  { name: 'Phone number (ID)',   pattern: /(?:\+62|0)[0-9]{8,12}/,                      severity: 'medium'   },
-  { name: 'Password-like value', pattern: /["']?(?:password|passwd|secret|token|key)["']?\s*[:=]\s*["'][^"']{8,}/i, severity: 'critical' },
+// ═══════════════════════════════════════════════════════════════════
+// MULTI-LAYER PII DETECTION ENGINE
+// ═══════════════════════════════════════════════════════════════════
+
+// ── LAYER 4A: Allowlist — pasti bukan PII, skip scan ─────────────
+// Jika string mengandung kata ini, langsung lewati
+const SYSTEM_ID_PREFIXES = [
+  'TXN-', 'BK-', 'CASE-', 'ALERT-', 'PAT-', 'SCR-', 'SAR-',
+  'SARR-', 'PROV-', 'TASK-', 'EMAIL-', 'DOC-', 'KYC-', 'KYCF-',
+  'AML-', 'EMP-', 'CUST-', 'version_', 'build_', 'tracking_',
+  'audit_', 'session_', 'request_', 'correlation_',
 ];
 
-// ── Blocked field patterns — kata-kata yang seharusnya tidak ada di response ──
+const SAFE_FIELD_NAMES = new Set([
+  'transactionId', 'transaction_id', 'bookingId', 'booking_id',
+  'caseId', 'case_id', 'alertId', 'alert_id', 'reportId', 'report_id',
+  'employeeId', 'employee_id', 'customerId', 'customer_id',
+  'screeningId', 'screening_id', 'provisioningId', 'provisioning_id',
+  'taskId', 'task_id', 'emailId', 'email_id', 'kycId', 'kyc_id',
+  'riskScore', 'risk_score', 'confidence', 'pages',
+  'expiresIn', 'expires_in', 'retentionDays', 'retention_days',
+  'transactionCount', 'transaction_count', 'flaggedCount', 'flagged_count',
+]);
+
+function isAllowlisted(value: string, fieldName?: string): boolean {
+  // Cek field name allowlist
+  if (fieldName && SAFE_FIELD_NAMES.has(fieldName)) return true;
+
+  // Cek prefix sistem
+  for (const prefix of SYSTEM_ID_PREFIXES) {
+    if (value.toUpperCase().startsWith(prefix.toUpperCase())) return true;
+  }
+
+  // Cek apakah UUID format (xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx)
+  const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  if (uuidPattern.test(value)) return true;
+
+  return false;
+}
+
+// ── LAYER 4B: Timestamp Sanity Check ─────────────────────────────
+// Angka 13 digit yang merupakan Unix timestamp (ms) antara 2020-2035
+function isLikelyTimestamp(numStr: string): boolean {
+  if (numStr.length !== 13) return false;
+  const num = parseInt(numStr, 10);
+  const year2020 = 1577836800000;
+  const year2035 = 2051222400000;
+  return num >= year2020 && num <= year2035;
+}
+
+// Angka 10 digit yang merupakan Unix timestamp (seconds)
+function isLikelyTimestampSeconds(numStr: string): boolean {
+  if (numStr.length !== 10) return false;
+  const num = parseInt(numStr, 10);
+  const year2020 = 1577836800;
+  const year2035 = 2051222400;
+  return num >= year2020 && num <= year2035;
+}
+
+// ── LAYER 4C: Luhn Algorithm — validasi kartu kredit ─────────────
+function luhnCheck(numStr: string): boolean {
+  const digits = numStr.replace(/\D/g, '');
+  if (digits.length < 13 || digits.length > 19) return false;
+
+  let sum = 0;
+  let isEven = false;
+
+  for (let i = digits.length - 1; i >= 0; i--) {
+    let digit = parseInt(digits[i], 10);
+    if (isEven) {
+      digit *= 2;
+      if (digit > 9) digit -= 9;
+    }
+    sum += digit;
+    isEven = !isEven;
+  }
+
+  return sum % 10 === 0;
+}
+
+// ── LAYER 4D: NIK Validation — struktur NIK Indonesia ────────────
+// NIK: 16 digit, 6 digit pertama adalah kode wilayah valid
+function isValidNIK(numStr: string): boolean {
+  if (numStr.length !== 16) return false;
+  if (!/^\d{16}$/.test(numStr)) return false;
+
+  // Digit pertama harus 1-9 (kode provinsi valid)
+  const provinceCode = parseInt(numStr.substring(0, 2), 10);
+  if (provinceCode < 11 || provinceCode > 96) return false;
+
+  // Digit 7-8 adalah tanggal lahir (01-71 untuk perempuan ditambah 40)
+  const day = parseInt(numStr.substring(6, 8), 10);
+  if (day < 1 || day > 71) return false;
+
+  // Digit 9-10 adalah bulan lahir (01-12)
+  const month = parseInt(numStr.substring(8, 10), 10);
+  if (month < 1 || month > 12) return false;
+
+  // Bukan timestamp
+  if (isLikelyTimestamp(numStr) || isLikelyTimestampSeconds(numStr)) return false;
+
+  return true;
+}
+
+// ── LAYER 1+2+3+4 Combined: PII Candidate Scanner ────────────────
+interface PIICandidate {
+  type: string;
+  value: string;
+  severity: 'low' | 'medium' | 'high' | 'critical';
+  confidence: 'high' | 'medium' | 'low';
+  fieldName?: string;
+}
+
+function scanForPII(obj: unknown, path = ''): PIICandidate[] {
+  const candidates: PIICandidate[] = [];
+
+  if (typeof obj === 'string') {
+    // Layer 1: Regex — tangkap kandidat kasar
+    const digits = obj.replace(/[\s\-]/g, '');
+
+    // Kandidat kartu kredit: 13-19 digit
+    if (/^\d{13,19}$/.test(digits) && digits.length >= 13) {
+      const fieldName = path.split('.').pop();
+
+      // Layer 4: Allowlist check
+      if (!isAllowlisted(obj, fieldName) && !isAllowlisted(digits, fieldName)) {
+
+        // Layer 2: Timestamp sanity check
+        const isTimestamp = isLikelyTimestamp(digits) || isLikelyTimestampSeconds(digits);
+
+        if (!isTimestamp) {
+          // Layer 3: Luhn algorithm
+          if (luhnCheck(digits)) {
+            candidates.push({
+              type: 'Credit card number',
+              value: `${digits.substring(0, 4)}****${digits.substring(digits.length - 4)}`,
+              severity: 'critical',
+              confidence: 'high',
+              fieldName,
+            });
+          }
+          // Layer 3: NIK validation
+          else if (isValidNIK(digits)) {
+            candidates.push({
+              type: 'Indonesian NIK',
+              value: `${digits.substring(0, 6)}**********`,
+              severity: 'critical',
+              confidence: 'high',
+              fieldName,
+            });
+          }
+        }
+      }
+    }
+
+    // Password/secret yang ter-expose — regex + field name check
+    const passwordPattern = /^.{8,}$/;
+    const fieldName = path.split('.').pop()?.toLowerCase() ?? '';
+    const sensitiveFieldNames = ['password', 'passwd', 'secret', 'private_key', 'client_secret', 'api_key', 'access_token'];
+    if (sensitiveFieldNames.includes(fieldName) && passwordPattern.test(obj)) {
+      candidates.push({
+        type: 'Exposed secret',
+        value: '[REDACTED]',
+        severity: 'critical',
+        confidence: 'high',
+        fieldName,
+      });
+    }
+  }
+
+  // Rekursif untuk object dan array
+  if (obj && typeof obj === 'object') {
+    for (const [key, val] of Object.entries(obj as Record<string, unknown>)) {
+      const childPath = path ? `${path}.${key}` : key;
+      candidates.push(...scanForPII(val, childPath));
+    }
+  }
+
+  if (Array.isArray(obj)) {
+    obj.forEach((item, idx) => {
+      candidates.push(...scanForPII(item, `${path}[${idx}]`));
+    });
+  }
+
+  return candidates;
+}
+
+// ── Blocked field patterns ───────────────────────────────────────
 const BLOCKED_FIELD_PATTERNS = [
   'salary', 'gaji', 'bonus', 'bank_account', 'rekening',
-  'medical_history', 'riwayat_medis', 'disability', 'disabilitas',
+  'medical_history', 'riwayat_medis', 'disability',
   'performance_score', 'review_notes', 'rating_karyawan',
-  'tax_id', 'npwp', 'private_key', 'client_secret',
+  'npwp', 'private_key', 'client_secret',
 ];
+
+// ── Write operation indicators ────────────────────────────────────
+const WRITE_INDICATORS = [
+  'affected_rows', 'rows_deleted', 'deleted_count', 'mutation_id',
+];
+
+// ── Volume thresholds per tool (bytes) ───────────────────────────
+const VOLUME_THRESHOLDS: Record<string, number> = {
+  search_flights:       10_000,
+  check_transaction:    5_000,
+  get_employee_profile: 3_000,
+  book_flight:          2_000,
+  check_aml:            8_000,
+  file_sar:             5_000,
+  verify_kyc:           4_000,
+  analyze_pattern:      6_000,
+};
+
+// ═══════════════════════════════════════════════════════════════════
+// MAIN VERIFIER
+// ═══════════════════════════════════════════════════════════════════
 
 export async function verifyPostExecution(params: {
   toolCall: { name: string; params: Record<string, unknown> };
@@ -37,12 +235,10 @@ export async function verifyPostExecution(params: {
   const executionMs = Date.now() - executionStartMs;
   const violations: VerificationViolation[] = [];
 
-  // Serialize result untuk inspection
   const resultStr = serializeSafe(result);
   let sanitizedResult = result;
 
-  // ── CHECK 1: Sensitive field leak detection ───────────────────────
-  // Untuk HR agent: pastikan blocked fields tidak ada di response
+  // ── CHECK 1: Sensitive field leak (HR data classification) ──────
   if (agentProfile.hardLimits.blockedDataFields?.length) {
     for (const blockedField of agentProfile.hardLimits.blockedDataFields) {
       const pattern = new RegExp(`["']?${blockedField}["']?\\s*[:=]\\s*`, 'i');
@@ -51,10 +247,10 @@ export async function verifyPostExecution(params: {
           type: 'SENSITIVE_FIELD_LEAK',
           severity: 'critical',
           field: blockedField,
-          detail: `Response contains blocked data field: "${blockedField}". This data should never be accessible to this agent.`,
+          detail: `Response contains blocked data field: "${blockedField}". ` +
+                  `This data should never be accessible to this agent.`,
           redacted: true,
         });
-        // Redact field dari result
         sanitizedResult = redactField(sanitizedResult, blockedField);
       }
     }
@@ -64,7 +260,6 @@ export async function verifyPostExecution(params: {
   for (const pattern of BLOCKED_FIELD_PATTERNS) {
     const regex = new RegExp(`["']${pattern}["']\\s*:`, 'i');
     if (regex.test(resultStr)) {
-      // Hanya flag jika bukan declared field yang diizinkan
       const isAllowed = agentProfile.hardLimits.allowedDataFields?.some(
         f => f.toLowerCase() === pattern.toLowerCase()
       );
@@ -73,7 +268,7 @@ export async function verifyPostExecution(params: {
           type: 'SENSITIVE_FIELD_LEAK',
           severity: 'high',
           field: pattern,
-          detail: `Response contains sensitive pattern "${pattern}" that is not in the allowed data fields list.`,
+          detail: `Response contains sensitive pattern "${pattern}" not in the allowed data fields list.`,
           redacted: true,
         });
         sanitizedResult = redactField(sanitizedResult, pattern);
@@ -81,14 +276,41 @@ export async function verifyPostExecution(params: {
     }
   }
 
-  // ── CHECK 3: Amount drift detection ─────────────────────────────────
-  // Pastikan amount di response tidak signifikan berbeda dari request
+  // ── CHECK 3: Multi-layer PII detection ───────────────────────────
+  // Hanya pada tools yang seharusnya tidak return PII langsung
+  const STRICT_NON_PII_TOOLS = new Set([
+    'search_flights',
+    'analyze_pattern',
+    'generate_sar_report',
+  ]);
+
+  if (STRICT_NON_PII_TOOLS.has(toolCall.name)) {
+    const piiCandidates = scanForPII(result);
+
+    for (const candidate of piiCandidates) {
+      if (candidate.confidence === 'high') {
+        violations.push({
+          type: 'PII_DETECTED',
+          severity: candidate.severity,
+          field: candidate.fieldName,
+          detail: `Multi-layer PII validation confirmed ${candidate.type} ` +
+                  `(passed Luhn/NIK algorithm check) in tool "${toolCall.name}" ` +
+                  `which should not return personal data. ` +
+                  `Masked value: ${candidate.value}`,
+          redacted: true,
+        });
+        sanitizedResult = redactPIIFromResult(sanitizedResult, candidate.type);
+      }
+    }
+  }
+
+  // ── CHECK 4: Amount drift detection ──────────────────────────────
   const requestedAmount = extractAmountFromParams(toolCall.params);
   const responseAmount  = extractAmountFromResult(result);
 
   if (requestedAmount !== null && responseAmount !== null) {
     const drift = Math.abs(responseAmount - requestedAmount) / requestedAmount;
-    if (drift > 0.05) {  // >5% drift — anomali
+    if (drift > 0.05) {
       violations.push({
         type: 'AMOUNT_DRIFT',
         severity: drift > 0.20 ? 'critical' : 'high',
@@ -100,36 +322,8 @@ export async function verifyPostExecution(params: {
     }
   }
 
-  // ── CHECK 4: PII detection ───────────────────────────────────────────
-  // Untuk tools yang seharusnya tidak return PII
-  const NON_PII_TOOLS = new Set([
-    'search_flights', 'check_transaction', 'analyze_pattern',
-    'check_aml', 'screen_transaction', 'generate_sar_report',
-  ]);
-
-  if (NON_PII_TOOLS.has(toolCall.name)) {
-    for (const { name, pattern, severity } of PII_PATTERNS) {
-      if (pattern.test(resultStr)) {
-        violations.push({
-          type: 'PII_DETECTED',
-          severity,
-          detail: `PII detected in response (${name}) for tool "${toolCall.name}" ` +
-                  `which should not return personal data.`,
-          redacted: true,
-        });
-        // Redact PII dari response
-        sanitizedResult = redactPII(sanitizedResult, pattern);
-        break; // Flag satu kali cukup
-      }
-    }
-  }
-
-  // ── CHECK 5: Scope overshoot ─────────────────────────────────────────
-  // Kalau scope yang diotorisasi adalah read-only, response tidak boleh
-  // berisi tanda-tanda write operation (affected_rows, created_id, dll)
+  // ── CHECK 5: Scope overshoot ──────────────────────────────────────
   const hasWriteScope = scopeDecision.minimalScopes.some(s => s.includes(':write'));
-  const WRITE_INDICATORS = ['affected_rows', 'rows_deleted', 'deleted_count', 'mutation_id'];
-
   if (!hasWriteScope) {
     for (const indicator of WRITE_INDICATORS) {
       if (resultStr.toLowerCase().includes(indicator)) {
@@ -144,43 +338,34 @@ export async function verifyPostExecution(params: {
     }
   }
 
-  // ── CHECK 6: Anomalous volume ────────────────────────────────────────
+  // ── CHECK 6: Anomalous volume ─────────────────────────────────────
   const resultBytes = resultStr.length;
-  const VOLUME_THRESHOLDS: Record<string, number> = {
-    search_flights:       10_000,  // ~10KB untuk hasil search
-    check_transaction:    5_000,
-    get_employee_profile: 3_000,
-    book_flight:          2_000,
-    check_aml:            8_000,
-    file_sar:             5_000,
-  };
   const threshold = VOLUME_THRESHOLDS[toolCall.name] ?? 50_000;
 
   if (resultBytes > threshold) {
     violations.push({
       type: 'ANOMALOUS_VOLUME',
       severity: resultBytes > threshold * 5 ? 'high' : 'low',
-      detail: `Response size ${resultBytes} bytes exceeds expected threshold ` +
-              `of ${threshold} bytes for tool "${toolCall.name}". ` +
-              `Possible data exfiltration or misconfiguration.`,
+      detail: `Response size ${resultBytes} bytes exceeds expected ` +
+              `threshold of ${threshold} bytes for tool "${toolCall.name}".`,
       redacted: false,
     });
   }
 
-  // ── Determine final status ───────────────────────────────────────────
+  // ── Determine status ──────────────────────────────────────────────
   const criticalViolations = violations.filter(v => v.severity === 'critical');
   const highViolations     = violations.filter(v => v.severity === 'high');
 
   let status: VerificationStatus;
   if (criticalViolations.length > 0) {
-    status = 'quarantined';  // Critical → quarantine, block result dari agent
+    status = 'quarantined';
   } else if (highViolations.length > 0 || violations.some(v => v.redacted)) {
-    status = 'redacted';     // High → redact violations, pass sanitized result
+    status = 'redacted';
   } else {
     status = 'clean';
   }
 
-  // ── Audit log ────────────────────────────────────────────────────────
+  // ── Audit log ─────────────────────────────────────────────────────
   const auditEvent =
     status === 'quarantined' ? 'POST_EXEC_QUARANTINED' :
     violations.length > 0    ? 'POST_EXEC_VIOLATION'   :
@@ -194,7 +379,12 @@ export async function verifyPostExecution(params: {
     metadata: {
       status,
       violationCount: violations.length,
-      violations: violations.map(v => ({ type: v.type, severity: v.severity, detail: v.detail })),
+      violations: violations.map(v => ({
+        type: v.type,
+        severity: v.severity,
+        field: v.field,
+        detail: v.detail,
+      })),
       executionMs,
       resultBytes,
     },
@@ -202,8 +392,8 @@ export async function verifyPostExecution(params: {
 
   if (violations.length > 0) {
     console.warn(
-      `[ScopeGuard Layer 4] ${status.toUpperCase()} — ${violations.length} violation(s) ` +
-      `for ${agentProfile.agentId}:${toolCall.name}`
+      `[ScopeGuard L4] ${status.toUpperCase()} — ` +
+      `${violations.length} violation(s) for ${agentProfile.agentId}:${toolCall.name}`
     );
     for (const v of violations) {
       console.warn(`  [${v.severity.toUpperCase()}] ${v.type}: ${v.detail}`);
@@ -219,14 +409,10 @@ export async function verifyPostExecution(params: {
   };
 }
 
-// ── Helpers ──────────────────────────────────────────────────────────
+// ── Helpers ───────────────────────────────────────────────────────
 
 function serializeSafe(value: unknown): string {
-  try {
-    return JSON.stringify(value) ?? '';
-  } catch {
-    return String(value);
-  }
+  try { return JSON.stringify(value) ?? ''; } catch { return String(value); }
 }
 
 function extractAmountFromParams(params: Record<string, unknown>): number | null {
@@ -264,12 +450,12 @@ function redactField(result: unknown, fieldName: string): unknown {
   return r;
 }
 
-function redactPII(result: unknown, pattern: RegExp): unknown {
+function redactPIIFromResult(result: unknown, piiType: string): unknown {
   const str = serializeSafe(result);
-  const redacted = str.replace(pattern, '[PII-REDACTED]');
-  try {
-    return JSON.parse(redacted);
-  } catch {
-    return redacted;
-  }
+  // Redact long digit sequences yang sudah confirmed PII
+  const redacted = str.replace(
+    /\b\d{13,19}\b/g,
+    `[${piiType.toUpperCase().replace(' ', '-')}-REDACTED]`
+  );
+  try { return JSON.parse(redacted); } catch { return redacted; }
 }

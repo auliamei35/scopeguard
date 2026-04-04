@@ -11,7 +11,7 @@ Complete documentation for all registered agents. Each agent has its own Auth0 M
 | `travel-booking-agent-v1` | Travel & hospitality | $1,000 | $200 | — |
 | `fraud-detection-agent-v1` | Financial security | $5,000 | $1,000 | Velocity: 3/min |
 | `aml-compliance-agent-v1` | Regulated compliance | $100,000 | $50,000 | Country block + SAR |
-| `hr-onboarding-agent-v1` | Enterprise HR | $0 | $0 | Data classification |
+| `hr-onboarding-agent-v1` | Enterprise HR | $0 | $0 | Data classification | Field leak + PII |
 
 ---
 
@@ -53,7 +53,23 @@ email:send             Send emails on behalf of user
 | Step-up threshold | $200 | CIBA required before execution |
 | Allowed domains | `api.traveloka.com`, `api.tiket.com` | All others hard blocked |
 | Max actions/min | 5 | Velocity cap — 403 on exceed |
-| Forbidden scopes | `payment:admin`, `contacts:delete`, `files:delete` | Hard block |
+| Forbidden scopes | `payment:admin`, `contacts:delete`, `files:delete` | 403 SCOPE_CEILING |
+
+### Layer 4 Post-Execution Verification
+
+| Check | Configuration |
+|-------|--------------|
+| Amount drift | Flags if response amount differs >5% from request |
+| Scope overshoot | Flags write indicators if only read scopes authorized |
+| Anomalous volume | `book_flight`: 2KB, `search_flights`: 10KB threshold |
+| PII scan | Applied only to `search_flights` (strict non-PII tool) |
+
+### Layer 3 Scope Minimization (Observed)
+
+| Tool Call | Declared (3 scopes) | Gemini Selected | Reduction |
+|-----------|--------------------|-----------------|---------:|
+| `search_flights` | payment:write, calendar:events:write, email:send | **0** | 100% |
+| `book_flight $500` | payment:write, calendar:events:write, email:send | 2 | 33% |
 
 ### Demo Scenarios
 
@@ -74,22 +90,6 @@ email:send             Send emails on behalf of user
 # Expected: 403 DOMAIN_VIOLATION
 {"toolCall":{"name":"book_flight","params":{"destination":"Tokyo","amount":100,"url":"https://api.evil.com/book"},"requiredConnection":"mock"}}
 ```
-
-### LLM Scope Minimization (Layer 3 — Observed)
-
-| Tool Call | Declared (3 scopes) | Actual Used | Reduction |
-|-----------|--------------------|-----------:|----------:|
-| `search_flights` | payment:write, calendar:events:write, email:send | 0 | 100% |
-| `book_flight $500` | payment:write, calendar:events:write, email:send | 2 | 33% |
-
-### Post-Execution Verification (Layer 4)
-
-| Check | Configuration |
-|-------|--------------|
-| Sensitive field leak | Scans for blocked data fields in response |
-| Amount drift | Flags if response amount differs >5% from request |
-| Anomalous volume | Threshold: [per-tool value] bytes |
-| PII detection | [Enabled/Disabled based on tool set] |
 
 ---
 
@@ -134,14 +134,19 @@ account:read        Read account information (read-only)
 | Max actions/min | **3** | Strict velocity — fraud agents must not batch |
 | Forbidden scopes | `transaction:approve`, `account:write`, `account:delete`, `transfer:execute` | Never executable |
 
-### Post-Execution Verification (Layer 4)
+### Layer 4 Post-Execution Verification
 
 | Check | Configuration |
 |-------|--------------|
-| Sensitive field leak | Scans for blocked data fields in response |
-| Amount drift | Flags if response amount differs >5% from request |
-| Anomalous volume | Threshold: [per-tool value] bytes |
-| PII detection | [Enabled/Disabled based on tool set] |
+| Amount drift | Flags >5% discrepancy between requested and response amount |
+| Scope overshoot | Flags if write indicators appear in read-only responses |
+| Anomalous volume | `check_transaction`: 5KB threshold |
+| PII scan | **Not applied** — fraud tools legitimately reference transaction IDs (allowlisted) |
+
+**Why PII scan is not applied to `check_transaction`:** The mock result contains fields like `transactionId: "TXN-1775227554920"` — 16-digit numbers that could false-positive against naive credit card regex. The multi-layer PII engine handles this correctly:
+- Layer A (Allowlist): `TXN-` prefix → skipped
+- Even if not allowlisted: Layer B (Context) → 13-digit timestamp check
+- Even if not timestamp: Layer C (Luhn) → `1775227554920` fails Luhn → not flagged
 
 ### Demo Scenarios
 
@@ -223,33 +228,35 @@ alert:write         Submit compliance alerts
 | Max actions/min | 5 | Standard velocity |
 | Forbidden scopes | `transaction:approve`, `account:write`, `transfer:execute`, `kyc:delete` | Hard block |
 
-### Post-Execution Verification (Layer 4)
+### AML-Specific Constraints (unique to this agent)
+
+| Type | Value | Behavior |
+|------|-------|----------|
+| SAR threshold | $10,000 | Step-up triggered — PPATK reporting |
+| High-risk countries | `KY`, `VG`, `BZ`, `PA` | Step-up triggered + enhanced audit |
+| Blocked countries (OFAC) | `KP`, `IR`, `SY`, `CU` | **Hard block** — 403 COUNTRY_BLOCKED |
+
+**Why `maxTransactionAmountUSD` is $100,000 for AML:** AML tools must analyze large transactions to fulfill their compliance purpose. The $10,000 SAR threshold triggers step-up without hard-blocking — compliance officers need to file reports on high-value transactions, not reject them outright.
+
+### Layer 4 Post-Execution Verification
 
 | Check | Configuration |
 |-------|--------------|
-| Sensitive field leak | Scans for blocked data fields in response |
-| Amount drift | Flags if response amount differs >5% from request |
-| Anomalous volume | Threshold: [per-tool value] bytes |
-| PII detection | [Enabled/Disabled based on tool set] |
-
-### AML-Specific Constraints (unique to this agent)
-
-| Constraint | Value | Behavior |
-|-----------|-------|----------|
-| SAR threshold | $10,000 | Triggers step-up — PPATK reporting requirement |
-| High-risk countries | `KY`, `VG`, `BZ`, `PA` | Triggers step-up + enhanced audit log |
-| Blocked countries (OFAC) | `KP`, `IR`, `SY`, `CU` | **Hard block** — OFAC sanctions compliance |
+| Amount drift | Flags >5% discrepancy |
+| Scope overshoot | Write indicators in read-only responses |
+| Anomalous volume | `check_aml`: 8KB, `file_sar`: 5KB, `verify_kyc`: 4KB |
+| PII scan | Applied to `generate_sar_report` (strict non-PII tool) |
 
 ### Country Classification
 
 ```
-Hard Blocked (OFAC Sanctioned):
+Hard Blocked (OFAC Sanctioned — 403 COUNTRY_BLOCKED):
   KP — North Korea
   IR — Iran
   SY — Syria
   CU — Cuba
 
-High-Risk (Step-Up Required):
+High-Risk Jurisdictions (Step-Up Required):
   KY — Cayman Islands
   VG — British Virgin Islands
   BZ — Belize
@@ -331,44 +338,48 @@ onboarding:write   Create and manage onboarding workflows
 
 ### Hard Limits (Layer 2)
 
-| Constraint | Value | Behavior |
-|-----------|-------|----------|
-| Amount ceiling | $0 | HR agent never handles payments |
-| Step-up threshold | $0 | Step-up triggered by data classification only |
-| Allowed domains | `api.hr.internal`, `api.directory.internal` | All external domains blocked |
-| Max actions/min | 10 | Standard for HR workflows |
-| Forbidden scopes | `employee:delete`, `payroll:write`, `payroll:read`, `medical:read`, `medical:write`, `performance:delete` | Never accessible |
+| Constraint | Value | On Violation |
+|-----------|-------|-------------|
+| Amount ceiling | $0 | N/A — HR agent never handles payments |
+| Step-up threshold | $0 | Triggered only by data classification |
+| Allowed domains | `api.hr.internal`, `api.directory.internal` | 403 DOMAIN_VIOLATION |
+| Max actions/min | 10 | 403 VELOCITY_CAP |
+| Forbidden scopes | `employee:delete`, `payroll:write`, `payroll:read`, `medical:read`, `medical:write`, `performance:delete` | 403 SCOPE_CEILING |
 
-### Post-Execution Verification (Layer 4)
+### Data Classification (HR-specific L2 constraint)
 
-| Check | Configuration |
-|-------|--------------|
-| Sensitive field leak | Scans for blocked data fields in response |
-| Amount drift | Flags if response amount differs >5% from request |
-| Anomalous volume | Threshold: [per-tool value] bytes |
-| PII detection | [Enabled/Disabled based on tool set] |
-
-### Data Classification (unique to this agent)
-
-**Allowed fields** (freely readable):
+**Allowed fields** — readable without step-up:
 ```
 email, phone, department, name, position,
 start_date, manager, team, role
 ```
 
-**Step-up required fields** (sensitive but accessible with approval):
+**Step-up required fields** — sensitive, readable only with CIBA approval:
 ```
 address, id_card, contract, nda
 ```
 
-**Hard blocked fields** (data classification — never accessible):
+**Hard blocked fields** — 403 DATA_CLASSIFICATION_BLOCKED:
 ```
-salary, bonus, tax, bank_account,
-salary_history, performance_score, review_notes,
-rating, medical_history, insurance, disability
+salary, bonus, tax, bank_account, salary_history,
+performance_score, review_notes, rating,
+medical_history, insurance, disability
 ```
 
-**Data retention:** 90 days maximum cache
+**Data retention:** 90 days maximum
+
+### Layer 4 Post-Execution Verification
+
+| Check | Configuration |
+|-------|--------------|
+| Sensitive field leak | Scans response for ALL blocked data fields (salary, medical, performance, etc.) |
+| Generic field patterns | npwp, private_key, client_secret in any response |
+| Multi-layer PII | Full scan applied — NIK (Indonesian ID) and credit card with Luhn validation |
+| Amount drift | N/A — HR agent has no payment amounts |
+| Anomalous volume | `get_employee_profile`: 3KB threshold |
+
+**Why Layer 4 is especially important for HR:** Layer 2 blocks *requests* for blocked fields. But what if a backend misconfiguration includes salary data in a general employee profile response? Layer 4 catches this at output — the data never reaches the agent.
+
 
 ### Demo Scenarios
 
@@ -401,6 +412,82 @@ rating, medical_history, insurance, disability
 # Expected: 403 DOMAIN_VIOLATION
 {"toolCall":{"name":"get_employee_profile","params":{"employeeId":"EMP-001","fields":["email"],"url":"https://api.external-hr.com/v1/employees"},"requiredConnection":"mock"}}
 ```
+
+---
+
+## Layer 4: Multi-Layer PII Detection (Applies to All Agents)
+
+The same PII engine runs after every tool execution. It uses four sequential validation layers:
+
+```
+Input: Any string value in the response JSON
+
+Layer A — Allowlist: Is this value obviously safe?
+  • Has system prefix? (TXN-, BK-, CASE-, ALERT-, AML-, EMP-...) → SKIP
+  • Is field name in safe set? (transactionId, riskScore, confidence...) → SKIP
+  • Matches UUID format? → SKIP
+  ↓ only if not allowlisted
+
+Layer B — Context / Sanity Check: Could this be a system number?
+  • 13-digit number that converts to year 2020-2035? → Unix timestamp → SKIP
+  • 10-digit number in Unix timestamp seconds range? → SKIP
+  ↓ only if passes context check
+
+Layer C — Algorithm Validation: Is this mathematically valid PII?
+  • Run Luhn algorithm → PASS → Credit card confirmed (high confidence)
+  • Check NIK structure:
+      - Province code valid (11-96)?
+      - Day valid (01-71, +40 for women)?
+      - Month valid (01-12)?
+      - Not a timestamp?
+    → PASS → NIK confirmed (high confidence)
+  ↓ only high-confidence candidates trigger violations
+
+Action on confirmed PII:
+  → severity: critical → quarantine result
+  → masked value logged: "4532****3366" or "350601**********"
+```
+
+**Key design principle:** Regex alone creates false positives (e.g., timestamp `1775227554920` matches 13-digit pattern). The context check and Luhn algorithm eliminate these. Only mathematically valid PII triggers a violation.
+
+---
+
+## Constraint Violation Reference
+
+### Layer 2 Violations (pre-execution, always block or step-up)
+
+| Code | Trigger |
+|------|---------|
+| `AMOUNT_CEILING` | `amount > maxTransactionAmountUSD` |
+| `DOMAIN_VIOLATION` | Domain not in `allowedDomains` |
+| `VELOCITY_CAP` | Actions in last 60s ≥ `maxActionsPerMinute` |
+| `SCOPE_CEILING` | Requested scope in `forbiddenScopes` |
+| `COUNTRY_BLOCKED` | Country in `blockedCountries` (OFAC) |
+| `DATA_CLASSIFICATION_BLOCKED` | Requested field in `blockedDataFields` |
+
+### Layer 2 Step-Up Triggers (allow with human approval)
+
+| Trigger | Condition |
+|---------|-----------|
+| Amount threshold | `amount > requiresStepUpAboveUSD` |
+| SAR threshold | `amount >= sarThresholdUSD` |
+| High-risk country | `country in highRiskCountries` |
+| Sensitive data field | `field in requiresStepUpForFields` |
+| Irreversible action | Tool name matches irreversible patterns + amount > 0 |
+
+### Layer 4 Violations (post-execution)
+
+| Code | Severity | Action |
+|------|----------|--------|
+| `SENSITIVE_FIELD_LEAK` | critical | Quarantine |
+| `PII_DETECTED` (high confidence) | critical | Quarantine |
+| `AMOUNT_DRIFT` (>20%) | critical | Quarantine |
+| `AMOUNT_DRIFT` (5-20%) | high | Redact |
+| `SCOPE_OVERSHOOT` | high | Redact |
+| `ANOMALOUS_VOLUME` (>5x threshold) | high | Redact |
+| `ANOMALOUS_VOLUME` (1-5x threshold) | low | Flag only |
+
+---
 
 ### Available Tools
 
@@ -444,35 +531,36 @@ AGENT_YOUR_CLIENT_ID=
 AGENT_YOUR_CLIENT_SECRET=
 ```
 
-### Step 3: Add to Registry
+### Step 3: Add to Registry (`src/lib/agent-registry.ts`)
 
 ```typescript
-// src/lib/agent-registry.ts
 const yourAgent: AgentProfile = {
   agentId: 'your-agent-id',
   agentType: 'specialist',
   ownerUserId: 'demo-user',
-  declaredCapabilities: ['scope:one', 'scope:two'],
+  declaredCapabilities: ['scope:read', 'scope:write'],
   hardLimits: {
-    maxTransactionAmountUSD: 500,
+    maxTransactionAmountUSD: 1000,
     allowedDomains: ['api.yourservice.com'],
     maxActionsPerMinute: 10,
     forbiddenScopes: ['admin:write'],
-    requiresStepUpAboveUSD: 100,
-    // AML-specific (optional):
+    requiresStepUpAboveUSD: 200,
+    // Optional — AML-specific:
     // highRiskCountries: ['KY', 'VG'],
     // sarThresholdUSD: 10000,
     // blockedCountries: ['KP'],
-    // HR-specific (optional):
+    // Optional — HR-specific:
     // allowedDataFields: ['email', 'name'],
-    // blockedDataFields: ['salary', 'medical'],
+    // blockedDataFields: ['salary', 'medical_history'],
     // requiresStepUpForFields: ['id_card'],
+    // dataRetentionDays: 90,
   },
   auth0ClientId: '',
   createdAt: new Date(),
   version: '1.0.0',
   isActive: true,
 };
+registry.set(yourAgent.agentId, yourAgent);
 ```
 
 ### Step 4: Update `resolveClientId`
@@ -492,13 +580,20 @@ In `src/lib/extract-params.ts`, add your tool-to-domain mappings:
 your_tool_name: 'api.yourservice.com',
 ```
 
-### Step 6: Add Mock Results (Optional)
+### Step 6: Add mock results (`src/lib/token-vault.ts`)
 
-In `src/lib/token-vault.ts`, add realistic mock results for your tools.
+```typescript
+your_tool_name: {
+  status: 'success',
+  result: { ... },
+  message: 'Tool executed via Token Vault',
+},
+```
 
-### Step 7: Create Demo Script
+### Step 7: Create demo script and API route
 
-Copy `src/demo/travel-agent.ts` as a template and customize scenarios.
+Copy `src/demo/travel-agent.ts` as template, customize scenarios.
+Copy `src/app/api/demo/route.ts` as template for the trigger endpoint.
 
 ---
 

@@ -1,9 +1,7 @@
 // src/app/rules/page.tsx
 
-// src/app/rules/page.tsx
-
 import Link from 'next/link';
-import { getAllAgents } from '@/lib/agent-registry'; 
+import { getAllAgents } from '@/lib/agent-registry';
 
 // ── Icons ─────────────────────────────────────────────
 const IconArrowLeft = () => (
@@ -34,7 +32,6 @@ const SEVERITY_STYLE: Record<string, { bg: string; color: string }> = {
   high:     { bg: 'rgba(245,158,11,0.1)', color: '#f59e0b' },
   medium:   { bg: 'rgba(59,130,246,0.1)', color: '#3b82f6' },
 };
-
 const LAYER_STYLE: Record<string, { bg: string; color: string }> = {
   L1:   { bg: 'rgba(59,130,246,0.12)', color: '#60a5fa' },
   L2:   { bg: 'rgba(239,68,68,0.12)', color: '#f87171' },
@@ -53,7 +50,6 @@ export default async function SecurityRulesPage() {
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap');
         *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
-        :root{--bg:#0a0e1a;--surface:#111827;--surface2:#1a2235;--surface3:#1e2d45;--border:rgba(255,255,255,0.06);--border2:rgba(255,255,255,0.12);--text:#f1f5f9;--text-2:#94a3b8;--text-3:#475569;--font:'DM Sans',sans-serif;--mono:'JetBrains Mono',monospace}
         body{background:var(--bg);font-family:var(--font);color:var(--text)}
         .page{max-width:860px;margin:0 auto;padding:40px 24px 80px}
         .back-link{display:inline-flex;align-items:center;gap:6px;color:var(--text-3);font-size:13px;text-decoration:none;margin-bottom:28px}

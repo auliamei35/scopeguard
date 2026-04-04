@@ -91,7 +91,6 @@ export default function ActivityLogsPage() {
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap');
         *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
-        :root{--bg:#0a0e1a;--surface:#111827;--surface2:#1a2235;--border:rgba(255,255,255,0.06);--border2:rgba(255,255,255,0.12);--text:#f1f5f9;--text-2:#94a3b8;--text-3:#475569;--font:'DM Sans',sans-serif;--mono:'JetBrains Mono',monospace}
         body{background:var(--bg);font-family:var(--font);color:var(--text)}
         .page{max-width:960px;margin:0 auto;padding:40px 24px 80px}
         .back-link{display:inline-flex;align-items:center;gap:6px;color:var(--text-3);font-size:13px;text-decoration:none;margin-bottom:28px}
@@ -115,7 +114,7 @@ export default function ActivityLogsPage() {
         .table th{padding:12px 16px;text-align:left;font-size:11px;font-weight:600;color:var(--text-3);text-transform:uppercase;letter-spacing:0.6px;border-bottom:0.5px solid var(--border)}
         .table td{padding:12px 16px;font-size:13px;border-bottom:0.5px solid var(--border);vertical-align:middle}
         .table tr:last-child td{border-bottom:none}
-        .table tr:hover td{background:rgba(255,255,255,0.02)}
+        .table tr:hover td{background:rgba(0,0,0,0.02)}
         .event-badge{display:inline-flex;align-items:center;padding:3px 10px;border-radius:20px;font-size:11px;font-weight:600;font-family:var(--mono);white-space:nowrap}
         .mono{font-family:var(--mono);font-size:12px;color:var(--text-3)}
         .risk-dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px}
@@ -140,7 +139,7 @@ export default function ActivityLogsPage() {
             placeholder="Search by event, agent, or tool..."
             value={search}
             onChange={e => setSearch(e.target.value)}
-          />
+        />
           <div className="filter-row">
             {FILTERS.map(f => (
               <button key={f} className={`filter-btn ${filter === f ? 'active' : ''}`} onClick={() => setFilter(f)}>
