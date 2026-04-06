@@ -44,17 +44,17 @@ export default function SettingsPage() {
         .back-link:hover{color:var(--text-2)}
         .page-title{font-size:22px;font-weight:600;letter-spacing:-0.4px;margin-bottom:4px}
         .page-sub{font-size:13px;color:var(--text-2);margin-bottom:32px}
-        .section{background:var(--surface);border:0.5px solid var(--border);border-radius:14px;margin-bottom:16px;overflow:hidden}
+        .section{background:var(--bg-1);border:0.5px solid var(--border-1);border-radius:14px;margin-bottom:16px;overflow:hidden}
         .section-header{padding:16px 20px;border-bottom:0.5px solid var(--border)}
         .section-title{font-size:14px;font-weight:500}
         .section-sub{font-size:12px;color:var(--text-3);margin-top:2px}
-        .setting-row{display:flex;align-items:center;justify-content:space-between;padding:14px 20px;border-bottom:0.5px solid var(--border)}
+        .setting-row{display:flex;align-items:center;justify-content:space-between;padding:14px 20px;border-bottom:0.5px solid var(--border-1)}
         .setting-row:last-child{border-bottom:none}
         .setting-label{font-size:13px;font-weight:500}
         .setting-desc{font-size:12px;color:var(--text-3);margin-top:2px}
         .toggle{position:relative;width:36px;height:20px;flex-shrink:0}
         .toggle input{opacity:0;width:0;height:0}
-        .toggle-track{position:absolute;inset:0;border-radius:10px;background:var(--border2);transition:background 0.2s;cursor:pointer}
+        .toggle-track{position:absolute;inset:0;border-radius:10px;background:var(--bg-4);transition:background 0.2s;cursor:pointer}
         .toggle input:checked + .toggle-track{background:#2563eb}
         .toggle-thumb{position:absolute;top:3px;left:3px;width:14px;height:14px;border-radius:50%;background:white;transition:transform 0.2s;pointer-events:none}
         .toggle input:checked ~ .toggle-thumb{transform:translateX(16px)}
@@ -71,7 +71,7 @@ export default function SettingsPage() {
         .btn-primary:hover{background:#1d4ed8}
         .btn-success{background:rgba(16,185,129,0.15);color:#10b981;border:0.5px solid rgba(16,185,129,0.2)}
         .theme-options{display:flex;gap:10px}
-        .theme-btn{display:flex;align-items:center;gap:7px;padding:8px 16px;border-radius:8px;font-size:13px;font-weight:500;cursor:pointer;border:0.5px solid var(--border2);background:var(--surface2);color:var(--text-2);font-family:var(--font);transition:all 0.15s}
+        .theme-btn{display:flex;align-items:center;gap:7px;padding:8px 16px;border-radius:8px;font-size:13px;font-weight:500;cursor:pointer;border:0.5px solid var(--border2);background:var(--bg-2);color:var(--text-2);font-family:var(--font);transition:all 0.15s}
         .theme-btn:hover{border-color:var(--border2);color:var(--text)}
         .theme-btn.active{border-color:#2563eb;background:rgba(37,99,235,0.1);color:#2563eb}
       `}</style>
