@@ -27,6 +27,7 @@ type NavItem = {
 const NAV_ITEMS: NavItem[] = [
   { id: 'dashboard', label: 'Dashboard' },
   { id: 'agents', label: 'Agents' },
+  { id: 'approvals', label: 'Approvals', badge: 2 },
   { id: 'activity', label: 'Activity Logs', badge: 3 },
   { id: 'rules', label: 'Security Rules' },
   { id: 'settings', label: 'Settings' },
@@ -271,8 +272,14 @@ const IconPulse = () => (
     <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
   </svg>
 );
+const IconBell = () => (
+  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/>
+    <path d="M13.73 21a2 2 0 0 1-3.46 0"/>
+  </svg>
+);
 
-const NAV_ICONS = [IconGrid, IconUsers, IconActivity, IconLock, IconSettings, IconHelp];
+const NAV_ICONS = [IconGrid, IconUsers, IconBell, IconActivity, IconLock, IconSettings, IconHelp];
 
 export default function DashboardPage() {
   const [data, setData] = useState<AuditResponse | null>(null);
@@ -813,10 +820,12 @@ export default function DashboardPage() {
                     // Logika baru dimulai di sini
                     const routes: Record<string, string> = {
                       agents:   '/consent',
+                      approvals: '/approvals',
                       activity: '/activity',
                       rules:    '/rules',
                       settings: '/settings',
                       help:     '/help',
+                      insights:  '/insights',
                     };
                     if (routes[item.id]) {
                       window.location.href = routes[item.id];
@@ -920,6 +929,13 @@ export default function DashboardPage() {
               >
               Run HR Demo
               </button>
+              <button
+                className="btn btn-ghost"
+                onClick={() => window.location.href = '/ask'}
+                style={{ borderColor: 'rgba(59,130,246,0.3)', color: '#60a5fa' }}
+              >
+              Try Agent Simulator
+            </button>
             </div>
           </div>
 
@@ -952,6 +968,52 @@ export default function DashboardPage() {
               </p>
             </div>
           )}
+
+          {/* Agent Cards Section */}
+          <div style={{ marginBottom: 24 }}>
+            <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.6px', marginBottom: 14 }}>
+              Registered Agents
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12 }}>
+              {[
+                { id: 'travel-booking-agent-v1', label: 'Travel Booking', color: '#3b82f6', max: '$1,000', approval: '$200' },
+                { id: 'fraud-detection-agent-v1', label: 'Fraud Detection', color: '#ef4444', max: '$5,000', approval: '$1,000' },
+                { id: 'aml-compliance-agent-v1', label: 'AML Compliance', color: '#f59e0b', max: '$100,000', approval: '$50,000' },
+                { id: 'hr-onboarding-agent-v1', label: 'HR Onboarding', color: '#10b981', max: '$0', approval: 'N/A' },
+              ].map(agent => (
+                <div key={agent.id} style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 12, padding: 16 }}>
+                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+                   <div style={{ width: 8, height: 8, borderRadius: '50%', background: agent.color, boxShadow: `0 0 6px ${agent.color}` }} />
+                   <div style={{ fontSize: 13, fontWeight: 500 }}>{agent.label}</div>
+                 </div>
+                 <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginBottom: 12 }}>
+                   <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11 }}>
+                     <span style={{ color: 'var(--text-3)' }}>Max amount</span>
+                     <span style={{ fontFamily: 'var(--mono)', color: agent.color }}>{agent.max}</span>
+                   </div>
+                   <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11 }}>
+                     <span style={{ color: 'var(--text-3)' }}>Step-up above</span>
+                     <span style={{ fontFamily: 'var(--mono)', color: 'var(--text-2)' }}>{agent.approval}</span>
+                   </div>
+                   <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11 }}>
+                     <span style={{ color: 'var(--text-3)' }}>Status</span>
+                     <span style={{ color: '#10b981', fontWeight: 600 }}>Active</span>
+                   </div>
+                 </div>
+               <button
+                 onClick={() => window.location.href = `/ask?agent=${agent.id}`}
+                 style={{
+                   width: '100%', padding: '7px', borderRadius: 8,
+                   background: `${agent.color}12`, border: `1px solid ${agent.color}25`,
+                   color: agent.color, fontSize: 11, fontWeight: 600, cursor: 'pointer',
+                  }}
+                >
+                  Try this agent
+               </button>
+             </div>
+            ))}
+         </div>
+       </div>
 
           {/* Two column */}
           <div className="two-col">
